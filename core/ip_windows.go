@@ -19,13 +19,8 @@ var (
 	procGetIpNetTable        = iphlpapi.NewProc("GetIpNetTable")
 )
 
-const (
-	ifOperStatusUp       = 1
-	ifTypeLoopback       = 24
-	ifTypeEthernetCSMACD = 6
-	ifTypeIeee80211      = 71
-	ifTypeTunnel         = 131
-)
+// The ifType/ifOperStatus constants and linkTypeName live in nettypes.go
+// (shared with the untagged ip.go).
 
 // ipAdapterAddresses mirrors IP_ADAPTER_ADDRESSES_LH for 64-bit Windows.
 // Only the fields we read are laid out; the trailing fields (which we skip by
@@ -122,26 +117,8 @@ type sockaddrIn6 struct {
 	ScopeID  uint32
 }
 
-// adapterInfo is the cooked, portable form of one adapter.
-type adapterInfo struct {
-	index       int
-	name        string // friendly name, e.g. "Ethernet"
-	desc        string // driver description
-	ifType      uint32
-	operStatus  uint32
-	mtu         uint32
-	mac         string
-	flags       string
-	ipv4        []addrInfo
-	ipv6        []addrInfo
-	gateways    []string
-}
-
-type addrInfo struct {
-	ip       string // "127.0.0.1" or "::1"
-	prefix   int
-	scope    string
-}
+// adapterInfo, addrInfo and netNeighbor are defined in nettypes.go (shared,
+// portable data used by the untagged ip.go too).
 
 // adapters returns the full adapter list, read-only.
 func adapters() ([]adapterInfo, error) {
@@ -241,26 +218,7 @@ func adapterFlags(a *ipAdapterAddresses) string {
 	return strings.Join(f, ",")
 }
 
-// linkTypeName maps an ifType to the iproute2 link type name.
-func linkTypeName(ifType uint32) string {
-	switch ifType {
-	case ifTypeLoopback:
-		return "loopback"
-	case ifTypeIeee80211:
-		return "wifi"
-	case ifTypeTunnel:
-		return "tunnel"
-	default:
-		return "ether"
-	}
-}
-
 // netNeighbors returns the IPv4 neighbour (ARP) cache via GetIpNetTable.
-type netNeighbor struct {
-	devIdx       int
-	lladdr, addr string
-	perm         bool
-}
 
 func netNeighbors() ([]netNeighbor, error) {
 	var size uint32

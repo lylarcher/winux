@@ -3,6 +3,15 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · 修复非 Windows 交叉编译**：`sys.go`/`ip.go` 之前引用只在
+  `*_windows.go` 里定义的类型/常量，Linux 构建报错。新增共享文件
+  `core/nettypes.go`（无 build tag），迁入 `sockRow`/`routeRow`/`ifRow`/
+  `adapterInfo`/`addrInfo`/`netNeighbor`/`protoStats` 类型、MIB TCP 状态常量、
+  接口类型常量、`linkTypeName()` 与 `serviceName()`；`currentUserName` 的
+  `proc_other.go` 存根签名与 `sys.go` 不一致（返回 `(string,error)` vs
+  `string`）导致重定义，删除该存根（`sys.go` 的实现本就跨平台）。现在
+  `GOOS=linux` 与 `GOOS=darwin` 均可 `go build ./core/...` 通过，Windows 侧
+  行为不变（smoke 170 全绿）。
 - **2026-09-11 · 垫片内嵌进 winux.exe，激活时按 md5 增量解压**：`build.ps1`
   不再生成任何 .cmd/.ps1 文件——全部命令垫片（由命令表动态合成）与 5 个辅助
   脚本（`winux.cmd`、`cmd\winux-activate.cmd`/`winux-deactivate.cmd`、

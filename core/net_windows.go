@@ -12,9 +12,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"os"
 	"strings"
-	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -40,22 +38,12 @@ const (
 	udpTableOwnerPid    = 1
 
 	errorInsufficientBuffer = 0x7A
-
-	// MIB_TCP_STATE values
-	tcpClosed, tcpListen, tcpSynSent, tcpSynReceived, tcpEstablished = 1, 2, 3, 4, 5
-	tcpFinWait1, tcpFinWait2, tcpCloseWait, tcpClosing, tcpLastAck   = 6, 7, 8, 9, 10
-	tcpTimeWait, tcpDeleteTcb                                       = 11, 12
 )
 
-// sockRow is one entry of a TCP or UDP socket table.
-type sockRow struct {
-	proto             string // tcp, tcp6, udp, udp6
-	state             int    // MIB TCP state; 0 for UDP
-	local, remote     string // formatted address (host:port)
-	lport, rport      int
-	pid               int
-	stateName         string // human state, precomputed
-}
+// The MIB_TCP_STATE constants (tcpClosed .. tcpDeleteTcb) are in nettypes.go
+// (shared with the untagged netstat.go); serviceName is there too.
+
+// sockRow, routeRow and ifRow are defined in nettypes.go (shared, portable).
 
 // tcpRows returns every TCP socket (v4 and v6) with its owner PID.
 func tcpRows() ([]sockRow, error) {
@@ -176,13 +164,6 @@ func swap16(v uint32) int {
 	return int((v&0xFF)<<8 | (v>>8)&0xFF)
 }
 
-// routeRow is one IPv4 route.
-type routeRow struct {
-	dest, mask, gateway string
-	ifIndex, metric     int
-	typ, proto          int
-}
-
 // routeRows returns the IPv4 forwarding table.
 func routeRows() ([]routeRow, error) {
 	var size uint32
@@ -213,20 +194,8 @@ func routeRows() ([]routeRow, error) {
 	return rows, nil
 }
 
-// ifRow is one interface's statistics from MIB_IFROW.
-type ifRow struct {
-	index, mtu, speed  uint32
-	name               string // friendly description
-	addr               string // MAC, hex
-	adminUp, operUp    bool
-	inOctets, outOctets        uint32
-	inUcast, inNUcast          uint32
-	inDiscards, inErrors       uint32
-	inUnknown                  uint32
-	outUcast, outNUcast        uint32
-	outDiscards, outErrors     uint32
-}
-
+// mibIfRowSize is the size of a MIB_IFROW structure (used to walk GetIfTable's
+// flat output buffer).
 const mibIfRowSize = 860
 
 // ifRows returns one row per interface, indexed by ifIndex.
@@ -298,13 +267,7 @@ func ifNameByIndex() map[int]string {
 	return m
 }
 
-// protoStats holds the aggregate counters used by `netstat -s`.
-type protoStats struct {
-	ip   [29]uint32 // MIB_IPSTATS
-	tcp  [15]uint32 // MIB_TCPSTATS
-	udp  [5]uint32  // MIB_UDPSTATS
-	icmp [26]uint32 // MIB_ICMPSTATS (in + out)
-}
+// protoStats is defined in nettypes.go (shared with the net_other.go stub).
 
 func gatherProtoStats() protoStats {
 	var s protoStats
@@ -323,57 +286,5 @@ func gatherProtoStats() protoStats {
 	return s
 }
 
-var (
-	servicesOnce sync.Once
-	services     map[int]string // port -> service name (TCP)
-)
-
-// serviceName resolves a well-known port via %SystemRoot%\System32\drivers\
-// etc\services, falling back to a small built-in table.
-func serviceName(port int) string {
-	servicesOnce.Do(func() {
-		services = map[int]string{}
-		data, err := os.ReadFile(os.Getenv("SystemRoot") + `\System32\drivers\etc\services`)
-		if err != nil {
-			return
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				continue
-			}
-			sp := strings.SplitN(fields[1], "/", 2)
-			if len(sp) != 2 || !strings.EqualFold(sp[1], "tcp") {
-				continue
-			}
-			var n int
-			if _, err := fmt.Sscanf(sp[0], "%d", &n); err == nil {
-				if _, ok := services[n]; !ok {
-					services[n] = fields[0]
-				}
-			}
-		}
-	})
-	if name, ok := services[port]; ok {
-		return name
-	}
-	switch port {
-	case 22:
-		return "ssh"
-	case 53:
-		return "domain"
-	case 80:
-		return "http"
-	case 443:
-		return "https"
-	case 445:
-		return "microsoft-ds"
-	case 3389:
-		return "ms-wbt-server"
-	}
-	return ""
-}
+// serviceName lives in nettypes.go (shared; on non-Windows it simply skips the
+// SystemRoot services file and uses the built-in fallback table).

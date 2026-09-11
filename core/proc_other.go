@@ -8,9 +8,8 @@ func snapshotProcesses() ([]procInfo, error) {
 	return nil, &unsupportedError{"process snapshot"}
 }
 
-func currentUserName() (string, error) {
-	return "", &unsupportedError{"current user lookup"}
-}
+// currentUserName is implemented portably in sys.go (os/user + env fallback),
+// so no stub is needed here.
 
 func physMemoryKB() uint64 { return 0 }
 
