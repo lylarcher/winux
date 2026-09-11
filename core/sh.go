@@ -540,6 +540,8 @@ func shRunOne(c shCmd, ctx *shCtx) int {
 		}
 		ctx.exitCode = &n
 		return n
+	case "cd":
+		return shRunCd(c, ctx)
 	case ":", "true":
 		return 0
 	case "false":

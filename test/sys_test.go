@@ -48,6 +48,9 @@ func TestEchoPwdWhichDate(t *testing.T) {
 func TestCdResolveAndPrint(t *testing.T) {
 	dir := chdirTemp(t)
 	vol := filepath.VolumeName(dir)
+	// keep the persistent OLDPWD state file out of the user profile during tests
+	t.Setenv("WINUX_OLDPWD_FILE", filepath.Join(dir, "oldpwd"))
+	t.Setenv("WINUX_ACTIVE", "1")
 
 	// absolute targets survive the round trip; forward slashes become back slashes
 	if got, err := core.ResolveCdTarget(vol + `\x\y`); err != nil || got != vol+`\x\y` {
@@ -93,13 +96,26 @@ func TestCdResolveAndPrint(t *testing.T) {
 	if code, _, _ := run(t, "", "cd", "no-such-dir-xyz"); code != 1 {
 		t.Fatalf("cd to a missing dir should exit 1, got %d", code)
 	}
-	// "cd -" uses the directory recorded in WINUX_PREVDIR (it must exist)
+	// "cd -" returns the previous directory recorded by the last successful cd
+	// (persisted in the winux state file, shared by the PS hook / cmd macro / sh)
 	prev := filepath.Join(dir, "elsewhere")
 	if err := os.Mkdir(prev, 0o777); err != nil {
 		t.Fatal(err)
 	}
+	if code, out, _ := run(t, "", "cd", prev); code != 0 || strings.TrimSpace(out) != prev {
+		t.Fatalf("cd %s = %q (code %d)", prev, out, code)
+	}
+	if code, out, _ := run(t, "", "cd", "-"); code != 0 || strings.TrimSpace(out) != dir {
+		t.Fatalf("cd - = %q (code %d), want %q", out, code, dir)
+	}
+	// toggling (cd - back and forth) is a shell-layer behaviour: the resolver
+	// cannot move the parent shell, so it only reports the recorded directory.
+	// The real toggle is covered by TestShCdBuiltin and the smoke cd section.
+	// the WINUX_PREVDIR environment variable is still honoured as a fallback
+	// when no state file exists yet
+	t.Setenv("WINUX_OLDPWD_FILE", filepath.Join(dir, "oldpwd-empty", "missing"))
 	t.Setenv("WINUX_PREVDIR", prev)
 	if code, out, _ := run(t, "", "cd", "-"); code != 0 || strings.TrimSpace(out) != prev {
-		t.Fatalf("cd - = %q (code %d)", out, code)
+		t.Fatalf("cd - env fallback = %q (code %d)", out, code)
 	}
 }

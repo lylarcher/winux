@@ -2,6 +2,7 @@ package core
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -291,5 +292,46 @@ func TestShRedirectEndToEnd(t *testing.T) {
 	b, _ = os.ReadFile("out.txt")
 	if code != 0 || string(b) != "hello\nworld\n" {
 		t.Fatalf("append => code %d out.txt %q", code, string(b))
+	}
+}
+
+func TestShCdBuiltin(t *testing.T) {
+	a := t.TempDir()
+	old, _ := os.Getwd()
+	os.Chdir(a)
+	defer os.Chdir(old)
+	t.Setenv("WINUX_OLDPWD_FILE", filepath.Join(a, "oldpwd"))
+	t.Setenv("WINUX_ACTIVE", "1")
+	b := t.TempDir()
+
+	// cd <b> really changes the sh process directory (silent), then cd - goes
+	// back to a, printing the target like bash does
+	code, out, errOut := Execute("sh", []string{"-c", "cd " + b + "\ncd -"}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("cd builtin: exit %d stderr %q", code, errOut)
+	}
+	if wd, _ := os.Getwd(); wd != a {
+		t.Fatalf("cwd after `cd -` = %s, want %s", wd, a)
+	}
+	if strings.TrimSpace(out) != a {
+		t.Fatalf("cd - output = %q, want %q", out, a)
+	}
+
+	// toggling back: `cd -` again returns to b
+	code, out, _ = Execute("sh", []string{"-c", "cd -"}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("second cd -: exit %d", code)
+	}
+	if wd, _ := os.Getwd(); wd != b {
+		t.Fatalf("cwd after second `cd -` = %s, want %s", wd, b)
+	}
+	if strings.TrimSpace(out) != b {
+		t.Fatalf("second cd - output = %q, want %q", out, b)
+	}
+
+	// cd to a missing directory fails with exit 1 and keeps the oldpwd record
+	code, _, _ = Execute("sh", []string{"-c", "cd no-such-dir-xyz"}, strings.NewReader(""))
+	if code != 1 {
+		t.Fatalf("cd to a missing dir: exit %d, want 1", code)
 	}
 }

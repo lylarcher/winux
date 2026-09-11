@@ -109,9 +109,11 @@ set "PATH=%WINUX_BIN%;%PATH%"
 set "WINUX_ACTIVE=1"
 rem cmd.exe resolves its own internal commands before PATH, so bind those names
 rem to winux with doskey macros (interactive sessions only, batch files unaffected).
-rem `cd /d` is the one cmd built-in that can cross drives, so `cd D:\some\dir`
-rem works directly from C:.
-doskey cd=cd /d $*
+rem `cd` is routed through the winux resolver so `cd -`, `cd ~`, `cd /` and
+rem cross-drive changes work exactly like the PowerShell hook: the resolver
+rem prints the absolute target and the for-loop hands it to cmd's own `cd /d`
+rem (the only cmd built-in that can cross drives).
+doskey cd=for /f "delims=" %%d in ('winux.exe cd $*') do cd /d %%d
 doskey mkdir=winux.exe mkdir $*
 doskey echo=winux.exe echo $*
 doskey date=winux.exe date $*
@@ -176,14 +178,14 @@ function cd {
         return
     }
     if ($args[0] -eq '-') {
-        if (-not $global:winuxPrevDir) {
-            Write-Host 'cd: OLDPWD not set' -ForegroundColor Red
+        if ($global:winuxPrevDir) {
+            $old = (Get-Location).Path
+            Set-Location -LiteralPath $global:winuxPrevDir -ErrorAction Stop
+            $global:winuxPrevDir = $old
             return
         }
-        $old = (Get-Location).Path
-        Set-Location -LiteralPath $global:winuxPrevDir -ErrorAction Stop
-        $global:winuxPrevDir = $old
-        return
+        # no in-session history yet: fall through so winux resolves `-` from
+        # its persistent OLDPWD state file (shared with cmd and sh)
     }
     $out = (& $global:winuxExe cd $args | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { return }   # winux already wrote the error to stderr

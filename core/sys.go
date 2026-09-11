@@ -36,8 +36,13 @@ func init() {
 //     prints the absolute path with back slashes and exits 0; otherwise it
 //     prints an error to stderr and exits 1.
 // The shell layer (the PowerShell `cd` function in activate.ps1 and the cmd.exe
-// `cd /d` doskey macro in activate.cmd) then performs the actual location
-// change, which is the only way an external `cd` can work on Windows.
+// doskey macro in activate.cmd) then performs the actual location change, which
+// is the only way an external `cd` can work on Windows.
+//
+// `cd -` (previous directory) works everywhere because winux keeps the last
+// visited directory in its own state file (see readOldPwd/writeOldPwd): the
+// direct exe, the cmd.exe macro and the sh builtin all read it, so the feature
+// no longer depends on a shell-specific environment variable.
 func cmdCd(args []string) int {
 	f := NewFlags()
 	if !parseOrDie("cd", f, args) {
@@ -67,6 +72,11 @@ func cmdCd(args []string) int {
 		warn("cd", "%s: No such file or directory", target)
 		return 1
 	}
+	// Every successful change records where we are now as the previous
+	// directory, so the next `cd -` (from any entry point) can come back.
+	if cur, err := os.Getwd(); err == nil {
+		writeOldPwd(cur)
+	}
 	fmt.Println(resolved)
 	// A direct `winux.exe cd DIR` cannot change the parent shell's directory
 	// (no child process can). When this session is not activated, the printed
@@ -81,11 +91,82 @@ func cmdCd(args []string) int {
 	return 0
 }
 
+// ----------------------------------------------------------- previous dir ---
+
+// oldPwdPath returns the per-user state file that records the last directory
+// visited by any winux cd (the bash $OLDPWD equivalent). It is a plain file so
+// the PowerShell hook, the cmd.exe macro and the sh builtin share one source
+// of truth; WINUX_OLDPWD_FILE overrides it (used by tests and smoke).
+func oldPwdPath() string {
+	if p := os.Getenv("WINUX_OLDPWD_FILE"); p != "" {
+		return p
+	}
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		if c, err := os.UserConfigDir(); err == nil {
+			base = c
+		} else {
+			base = os.TempDir()
+		}
+	}
+	return filepath.Join(base, "winux", "oldpwd")
+}
+
+func readOldPwd() string {
+	b, err := os.ReadFile(oldPwdPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func writeOldPwd(p string) {
+	if p == "" {
+		return
+	}
+	f := oldPwdPath()
+	os.MkdirAll(filepath.Dir(f), 0o755)
+	os.WriteFile(f, []byte(p), 0o600)
+}
+
+// shRunCd is the `cd` builtin of winux sh: unlike the resolver it really
+// changes the sh process directory (bash semantics: silent on success, prints
+// the target for `cd -`, and `cd` alone goes to $HOME). It writes the same
+// persistent OLDPWD file, so `cd -` inside a script toggles correctly.
+func shRunCd(c shCmd, ctx *shCtx) int {
+	target := "~"
+	if len(c.args) > 0 {
+		target = c.args[0]
+	}
+	resolved, err := ResolveCdTarget(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
+		return 1
+	}
+	st, err := os.Stat(resolved)
+	if err != nil || !st.IsDir() {
+		fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", target)
+		return 1
+	}
+	if cur, err := os.Getwd(); err == nil {
+		writeOldPwd(cur)
+	}
+	if err := os.Chdir(resolved); err != nil {
+		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
+		return 1
+	}
+	if target == "-" {
+		fmt.Println(resolved)
+	}
+	return 0
+}
+
 // ResolveCdTarget turns a cd argument into an absolute Windows path (back
-// slashes). It understands `~`, `~/...`, `-` (the previous directory recorded in
-// WINUX_PREVDIR), `/` (the root of the current drive) and a bare drive letter
-// such as `D:` (mapped to the drive root, since an external process cannot know
-// the drive's current directory).
+// slashes). It understands `~`, `~/...`, `-` (the previous directory: the
+// winux state file first, then the WINUX_PREVDIR environment variable set by
+// the PowerShell hook), `/` (the root of the current drive) and a bare drive
+// letter such as `D:` (mapped to the drive root, since an external process
+// cannot know the drive's current directory).
 func ResolveCdTarget(target string) (string, error) {
 	switch {
 	case target == "~":
@@ -95,6 +176,9 @@ func ResolveCdTarget(target string) (string, error) {
 		}
 		return h, nil
 	case target == "-":
+		if prev := readOldPwd(); prev != "" {
+			return prev, nil
+		}
 		prev := os.Getenv("WINUX_PREVDIR")
 		if prev == "" {
 			return "", fmt.Errorf("OLDPWD not set")

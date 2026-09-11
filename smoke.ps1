@@ -55,6 +55,11 @@ function Invoke-CmdLine {
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("winux-smoke-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $null = New-Item -ItemType Directory -Force -Path $work
 Push-Location $work
+
+# keep the persistent OLDPWD state file (used by `cd -`) inside the scratch
+# workspace, not the real user profile; it is removed with $work at the end
+$env:WINUX_OLDPWD_FILE = Join-Path $work '.oldpwd'
+
 try {
     Write-Host '== PowerShell section ==' -ForegroundColor Cyan
     . (Join-Path $bin 'activate.ps1') | Out-Null
@@ -190,6 +195,14 @@ try {
     Check 'direct winux cd explains the activate-first hint' ($hintRun -match 'activate' -and $hintRun -match 'src') $hintRun
     $code = Invoke-CmdLine "`"$winux`" cd no-such-dir-xyz >nul 2>&1"
     Check 'winux cd fails for a missing directory' ($code -eq 1) "exit=$code"
+    # the previous-directory state file lets `cd -` work from every entry point:
+    # the resolver recorded $work when it printed $work\src above
+    $dashRun = Text (& $winux cd -)
+    Check 'winux cd - resolves the previous directory' ($dashRun -eq $work) "got $dashRun"
+    cd $work\src
+    $dashRun2 = Text (& $winux cd -)
+    Check 'winux cd - toggles back' ($dashRun2 -eq $work) "got $dashRun2"
+    cd $work
     $curDrive = Split-Path (Get-Location).Path -Qualifier
     $alt = Get-PSDrive -PSProvider FileSystem | Where-Object {
         $_.Name -ne $curDrive.TrimEnd(':') -and (Test-Path (Join-Path $_.Root 'Windows') -ErrorAction SilentlyContinue)
@@ -440,9 +453,19 @@ call "$bin\rm.cmd" -f cmdtest/fslash.txt
 if exist cmdtest\fslash.txt (echo FAIL forward-slash rm & exit /b 12)
 call "$bin\sh.cmd" cmdheredoc.sh > shout.txt
 findstr heredoc-cmd-ok shout.txt >nul || (echo FAIL sh-heredoc & exit /b 13)
+rem the interactive doskey cd macro expands to exactly this for-loop, so test
+rem the generated command in batch form: resolver prints the previous dir,
+rem the for-loop hands it to cmd's own `cd /d`
+cd /d "$work\src"
+"$bin\winux.exe" cd "$work" >nul
+for /f "delims=" %%d in ('"$bin\winux.exe" cd -') do set "OLDD=%%d"
+if not "%OLDD%"=="$work\src" (echo FAIL cd-dash & exit /b 14)
+for /f "delims=" %%d in ('"$bin\winux.exe" cd -') do cd /d %%d
+if /i not "%CD%"=="$work\src" (echo FAIL cd-dash-move & exit /b 15)
+cd /d "$work"
 call "$bin\deactivate.cmd" >nul
-if defined WINUX_ACTIVE (echo FAIL deactivate & exit /b 14)
-doskey /macros | findstr /ic:"mkdir" >nul && (echo FAIL deactivate-macros & exit /b 14)
+if defined WINUX_ACTIVE (echo FAIL deactivate & exit /b 16)
+doskey /macros | findstr /ic:"mkdir" >nul && (echo FAIL deactivate-macros & exit /b 17)
 echo cmdtest-ok
 exit /b 0
 "@
@@ -465,7 +488,7 @@ exit /b 0
     $macroOk = ($macros['mkdir'] -like 'winux.exe mkdir*') -and
                ($macros['echo'] -like 'winux.exe echo*') -and
                ($macros['date'] -like 'winux.exe date*') -and
-               ($macros['cd'] -like 'cd /d*')
+               ($macros['cd'] -like 'for /f*winux.exe cd*')
     Check 'cmd.exe: doskey macros bind mkdir/echo/date/cd to winux' $macroOk (($macros | ConvertTo-Json -Compress))
 }
 finally {

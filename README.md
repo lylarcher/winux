@@ -153,9 +153,16 @@ Windows 上有个根本约束：**外部进程无法改变父 shell 的工作目
   `Set-Location` 真正切换。因此从 C: 可以一步 `cd D:\some\dir`，并且支持
   `cd -`（回到上一目录）、`cd /`（当前盘根）、`cd ~`、`cd "带 空格 的目录"`。
   单独 `cd` 打印当前目录。
-- **cmd.exe**（`activate.cmd` 安装的 doskey 宏）：`doskey cd=cd /d $*`。
-  cmd 内建 `cd` 无法跨盘（必须先 `D:` 再 `cd`），但 `cd /d` 可以一步跨盘；
-  宏只作用于交互式窗口，批处理文件请直接写 `cd /d D:\some\dir`。
+- **cmd.exe**（`activate.cmd` 安装的 doskey 宏）：`cd` 宏经 winux 解析后交给
+  cmd 自己的 `cd /d` 执行，因此 `cd -`、`cd ~`、`cd /`、跨盘与正反斜杠在
+  cmd 里同样可用（宏只作用于交互式窗口，批处理文件请直接写
+  `cd /d D:\some\dir`）。
+  ```
+  doskey cd=for /f "delims=" %d in ('winux.exe cd $*') do cd /d %d
+  doskey mkdir=winux.exe mkdir $*
+  doskey echo=winux.exe echo $*
+  doskey date=winux.exe date $*
+  ```
 
 路径书写注意（反斜杠）：
 
@@ -163,7 +170,10 @@ Windows 上有个根本约束：**外部进程无法改变父 shell 的工作目
   一律解析成反斜杠绝对路径。
 - `cd /` = 当前盘根（如 `C:\`）；`cd D:` = D 盘根（外部进程无法得知某盘的
   「当前目录」，映射到盘根是明确且可预期的行为）。
-- `cd -` 依赖环境变量 `WINUX_PREVDIR`（PowerShell 函数每次成功切换后自动维护）。
+- `cd -` 回上一目录：winux 把最近一次成功 `cd` 前的位置记入
+  `%LOCALAPPDATA%\winux\oldpwd` 状态文件（PowerShell 钩子、cmd 宏、`winux sh`
+  内建共用同一来源），因此三个入口都支持，且可连续 `cd -` 来回切换
+  （bash 的 $OLDPWD 语义）。可用 `WINUX_OLDPWD_FILE` 覆盖文件位置。
 
 ## 与 Linux 的差异（Windows 特性）
 
@@ -376,6 +386,13 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · `cd -` 全面可用**：上一目录不再依赖 PS 环境变量，winux 把
+  最近一次成功 `cd` 前的位置持久化到 `%LOCALAPPDATA%\winux\oldpwd`（可用
+  `WINUX_OLDPWD_FILE` 覆盖），PowerShell 钩子、cmd doskey 宏（改为经 winux
+  解析后交 `cd /d` 执行，`cd -/~/`/跨盘在 cmd 里同样生效）、`winux sh` 内建
+  （修复：此前 sh 的 `cd` 只打印不真正切换目录，现真 chdir 且记录 oldpwd）
+  三个入口统一支持，连续 `cd -` 可来回切换。smoke 新增直连 `cd -`、toggle、
+  cmd 宏机制（for 循环等价批处理）等 4 项，共 158 项全绿。
 - **2026-09-11 · 新增 `deactivate.ps1` / `deactivate.cmd`**：反向撤销激活——
   PowerShell 侧还原快照中被遮蔽的别名（PS 默认 `cd/ls/pwd/cat/ps` 等及用户
   自定义别名，激活时写入每会话快照文件）、移除 `cd` 函数、恢复 `WINUX_OLD_PATH`
