@@ -185,7 +185,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `hostname` | `-s -d -f -i`；设置主机名会拒绝（需要管理员，且 winux 不做） |
 | `which` | `-a`；按 PATH+PATHEXT 查找，找不到退出码 1（同 GNU） |
 | `sh` | `-c SCRIPT` 或脚本文件；内置 POSIX 风格小 shell：heredoc（`<<EOF … EOF`）、管道 `\|`、重定向 `> >> < 2> 2>> 2>&1`、`&& \|\|`、单双引号、`$VAR`/`${VAR}`/`$?`、`NAME=值` 变量、`cd`/`exit`/`:`/`true`/`false` 内建（见「sh 说明」） |
-| `id` | `-u -g -G -n`；输出 POSIX 形态身份（uid/gid 恒为 1000，见限制） |
+| `id` | `-u -g -G -n`；输出 POSIX 形态身份；uid/gid 取账户 SID 的 RID（首个本地账户为 1000，见限制）；支持 `id USER`，未知账户报 `no such user` 退出 1 |
 | `whoami` | 当前用户 |
 | `sudo` | `-i -s -u -E -n`；在 Windows 上以 UAC 提权重跑命令/开管理员 shell（见下） |
 | `su` | `-c -l -s`；root/administrator → UAC 管理员 shell；其它用户 → `runas.exe` |
@@ -308,7 +308,10 @@ Windows 上有个根本约束：**外部进程无法改变父 shell 的工作目
 - **编码**：与 GNU grep 一致，含 NUL 字节的文件（如 PowerShell `>` 重定向默认
   产生的 UTF-16 文件）按二进制处理，`grep` 报告 `Binary file ... matches`；
   需要按文本搜索时用 `grep -a` 或先 `Get-Content | winux grep`。
-- **单用户**：`id`/`whoami` 输出当前账户的合成 uid/gid（1000），仅作兼容显示。
+- **单用户**：Windows 没有 uid/gid，`id` 用账户 SID 的 **RID**（末段子权威）当
+  uid 与 gid——本地账户从 1000 起编号，所以首个账户就是惯例的 1000，输出形如
+  `uid=1000(lyl) gid=1000(lyl) groups=1000(lyl)`；`id USER` 会解析真实账户
+  （`id Administrator` → 500），查无此人时报 `id: 'xxx': no such user`（同 GNU）。
 - **交互工具**（`less`、`more`、`vi`）在 stdout 不是控制台时（管道/重定向/CI）
   自动退化为直接输出文件内容（`vi` 则报错提示需要控制台），不会挂死。
 

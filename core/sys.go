@@ -431,7 +431,11 @@ func cmdWhoami(args []string) int {
 }
 
 // cmdID reports a POSIX-shaped identity. Windows has no uid/gid, so winux maps
-// the current account onto the conventional 1000/1000 pair.
+// an account onto the RID of its SID (the closest native analogue; the first
+// local account gets 1000, which is the conventional value winux reports for
+// the current user) and uses it for both uid and gid, GNU's user-private-group
+// shape. An explicit USER operand is resolved against the local account
+// database; unknown accounts fail exactly like GNU's "no such user".
 func cmdID(args []string) int {
 	f := NewFlags(
 		&Flag{Name: "user", Short: 'u', Long: "user", Help: "print only the effective user ID"},
@@ -445,8 +449,24 @@ func cmdID(args []string) int {
 	if handleHelpVersion("id", "[OPTION]... [USER]", f) {
 		return 0
 	}
+	op := f.Positional
+	if len(op) > 1 {
+		warn("id", "extra operand '%s'", op[1])
+		return 1
+	}
 	name := shortUserName(currentUserName())
-	const uid, gid = "1000", "1000"
+	uid := uint32(1000) // convention: the first local account's RID
+	if len(op) == 1 {
+		if rid, canon, ok := accountLookup(op[0]); ok {
+			name, uid = canon, rid
+		} else {
+			fmt.Fprintf(os.Stderr, "id: '%s': no such user\n", op[0])
+			return 1
+		}
+	} else if rid, canon, ok := accountLookup(name); ok {
+		name, uid = canon, rid // real RID of the current account when resolvable
+	}
+	gid := uid
 	switch {
 	case f.Has("user"):
 		if f.Has("name") {
@@ -467,7 +487,7 @@ func cmdID(args []string) int {
 			fmt.Println(gid)
 		}
 	default:
-		fmt.Printf("uid=%s(%s) gid=%s(%s) groups=%s(%s)\n", uid, name, gid, name, gid, name)
+		fmt.Printf("uid=%d(%s) gid=%d(%s) groups=%d(%s)\n", uid, name, gid, name, gid, name)
 	}
 	return 0
 }

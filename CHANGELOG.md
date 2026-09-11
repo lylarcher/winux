@@ -3,6 +3,13 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · 修复 `id USER` 忽略用户名参数**：此前 `id test`/`id hello` 等
+  一律打印当前用户身份（[USER] 位置参数被完全无视）。现在 `id USER` 用
+  `LookupAccountNameW` 把账号名解析成 SID 并取末段 **RID** 当 uid/gid（本地
+  账户从 1000 起，`id Administrator` → 500，首个账户即惯例的 1000），同时经
+  SID→名字反查输出规范化账号名（`id FTPUSER` → `uid=1004(ftpuser)`）；账户
+  不存在时报 `id: 'xxx': no such user` 退出 1，多余操作数报 `extra operand`
+  （均同 GNU）。smoke 新增 4 项断言，README「限制」与命令表同步更新。
 - **2026-09-11 · 验证并固化「与 Python venv 并存」**：用真实 venv 在 cmd 与
   PowerShell 里实测 winux 与 Python venv 任意顺序激活都互不冲突——双方都是
   「保存原值+前置+后进先出还原」的会话机制，标记变量（WINUX_* vs

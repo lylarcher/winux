@@ -22,6 +22,10 @@ func fileOwner(path string) (string, error) {
 	return "", &unsupportedError{"file owner lookup"}
 }
 
+// accountLookup is a no-op off Windows; id keeps the 1000/1000 convention for
+// the current user and reports explicit USER operands as unknown there.
+func accountLookup(name string) (uint32, string, bool) { return 0, name, false }
+
 type unsupportedError struct{ tool string }
 
 func (e *unsupportedError) Error() string { return e.tool + " is not available on this platform" }

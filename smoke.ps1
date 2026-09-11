@@ -160,6 +160,16 @@ try {
     Check 'which exits 1 for an unknown command' ($code -eq 1) "exit=$code"
     Check 'echo prints its arguments' ((Text (echo hello world)) -eq 'hello world')
     Check 'id prints a POSIX-shaped identity' ((Text (id)) -match 'uid=')
+    $me = Split-Path $env:USERPROFILE -Leaf
+    $meId = Text (id $me)
+    Check 'id USER resolves the named account (name matches)' ($meId -match [regex]::Escape("($me)")) $meId
+    $meUid = (Text (id -u $me)).Trim()
+    Check 'id -u USER prints a numeric id' ($meUid -match '^\d+$') $meUid
+    $code = Invoke-CmdLine "`"${shims}\id.cmd`" no-such-user-xyz >nul 2>&1"
+    Check 'id USER exits 1 for an unknown account' ($code -eq 1) "exit=$code"
+    $stderrOut = (& cmd /c "`"${shims}\id.cmd`" no-such-user-xyz 2>&1" | Out-String)
+    Check 'id USER reports no such user on stderr' `
+        ($stderrOut -match "no such user") (Text $stderrOut)
     Check 'whoami prints a user name' ((Text (whoami)).Length -gt 0)
     Check 'hostname prints something' ((Text (hostname)).Length -gt 0)
     Check 'ln -s / ln create links' ((Text (& $winux ln -v src/a.txt hardlink.txt)) -match 'hardlink' -or (Test-Path hardlink.txt))
