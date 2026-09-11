@@ -338,6 +338,10 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · 修复 `vi/vim` insert 模式光标不可见**：`newScreen()` 会先发送
+  `\x1b[?25l` 隐藏控制台光标，但 vi 从不在绘制时恢复；现在 vi 每帧重绘时显式
+  `\x1b[?25h` 显示光标，并按模式切换形状（normal 方块 `\x1b[2 q`、insert 竖线
+  `\x1b[6 q`），退出时复位。
 - **2026-09-11 · `nmtui` 改为调出 Windows 网络连接面板**：执行 `nmtui`
   打开 `ncpa.cpl`（控制面板\网络和 Internet\网络连接），`edit/connect` 同一面板，
   `hostname` 打开「重命名这台电脑」设置页。

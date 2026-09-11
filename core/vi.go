@@ -105,6 +105,8 @@ func cmdVi(args []string) int {
 	}
 	defer scr.close()
 	e.loop()
+	// reset the cursor shape to the console default after the session
+	os.Stdout.WriteString("\x1b[2 q")
 	return 0
 }
 
@@ -1244,6 +1246,15 @@ func (e *Editor) draw() {
 	}
 	if col < 1 {
 		col = 1
+	}
+	// newScreen() hides the console cursor (\x1b[?25l); vi re-shows it on
+	// every frame and switches its shape per mode (block in normal mode,
+	// bar in insert mode), so the insertion point is always visible even at
+	// the end of a line where the cell is empty.
+	if e.Mode == ModeInsert {
+		b.WriteString("\x1b[6 q\x1b[?25h")
+	} else {
+		b.WriteString("\x1b[2 q\x1b[?25h")
 	}
 	fmt.Fprintf(&b, "\x1b[%d;%dH", row, col)
 	os.Stdout.WriteString(b.String())
