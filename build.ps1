@@ -29,7 +29,7 @@ $null = New-Item -ItemType Directory -Force -Path $bin
 $commands = @(
     'cal', 'cat', 'cd', 'chgrp', 'chmod', 'chown', 'clear', 'cp', 'cut', 'date', 'du', 'echo',
     'grep', 'groupadd', 'groupdel', 'head', 'hostname', 'id', 'ip', 'ipconfig', 'less', 'ln',
-    'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sort', 'ss',
+    'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sh', 'sort', 'ss',
     'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'useradd', 'userdel', 'usermod',
     'vi', 'vim', 'wc', 'which', 'whoami'
 )

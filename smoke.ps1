@@ -154,7 +154,7 @@ try {
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui')) {
+            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -319,6 +319,44 @@ try {
         Check 'ln -s -t is skipped without Developer Mode' ($true)
     }
 
+    # ------------------------------------------------------------------- sh --
+    Write-Host '== sh section ==' -ForegroundColor Cyan
+
+    $here = Text (& $winux sh -c "cat <<EOF`nhello 世界`nEOF`n")
+    Check 'sh heredoc feeds cat' ($here -eq 'hello 世界') $here
+
+    $lit = Text (& $winux sh -c "cat <<'EOF'`n`$HOME stays literal`nEOF`n")
+    Check 'sh heredoc with a quoted delimiter is literal' ($lit -eq '$HOME stays literal') $lit
+
+    $x = Text (& $winux sh -c "X=winux`necho `$X")
+    Check 'sh variables persist across lines' ($x -eq 'winux') $x
+
+    $q = Text (& $winux sh -c "echo hello | grep ell")
+    Check 'sh pipeline runs winux commands' ($q -match 'hello') $q
+
+    $codeOut = & $winux sh -c "false && echo nope"
+    Check 'sh && short-circuits and propagates the exit code' ([string]::IsNullOrEmpty($codeOut) -and $LASTEXITCODE -eq 1) "exit=$LASTEXITCODE"
+
+    $codeOut2 = & $winux sh -c "false || echo yes"
+    Check 'sh || runs on failure' ((Text $codeOut2) -eq 'yes' -and $LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+
+    $redirFile = Join-Path $work 'sh-redir.txt'
+    & $winux sh -c "echo redirected > $redirFile" | Out-Null
+    Check 'sh > redirects stdout to a file' ((((Get-Content $redirFile -Raw) -replace "`r?`n$",'') -eq 'redirected') -and $LASTEXITCODE -eq 0)
+
+    $shScript = Join-Path $work 'demo.sh'
+    Set-Content -Path $shScript -Value @'
+msg='heredoc from a script file'
+cat <<EOF
+$msg
+EOF
+'@ -Encoding ascii
+    $scriptOut = Text (& $winux sh $shScript)
+    Check 'sh runs a script file with heredoc and variables' ($scriptOut -eq 'heredoc from a script file') $scriptOut
+
+    $status = & $winux sh -c "exit 42"
+    Check 'sh exit builtin sets the exit code' ($LASTEXITCODE -eq 42) "exit=$LASTEXITCODE"
+
     # ----------------------------------------------------------------- network --
     if ($Network) {
         Write-Host '== network section (read-only) ==' -ForegroundColor Cyan
@@ -385,9 +423,13 @@ call "$bin\cp.cmd" cmdtest/f1.txt cmdtest/fslash.txt
 if not exist cmdtest\fslash.txt (echo FAIL forward-slash cp & exit /b 12)
 call "$bin\rm.cmd" -f cmdtest/fslash.txt
 if exist cmdtest\fslash.txt (echo FAIL forward-slash rm & exit /b 12)
+call "$bin\sh.cmd" cmdheredoc.sh > shout.txt
+findstr heredoc-cmd-ok shout.txt >nul || (echo FAIL sh-heredoc & exit /b 13)
 echo cmdtest-ok
 exit /b 0
 "@
+    $cmdHereScript = Join-Path $work 'cmdheredoc.sh'
+    Set-Content -Path $cmdHereScript -Value "cat <<EOF`nheredoc-cmd-ok`nEOF`n" -Encoding ascii
     $cmdFile = Join-Path $work 'cmd-section.cmd'
     Set-Content -Path $cmdFile -Value $cmdScript -Encoding ascii
     $cmdOut = Text (& cmd /c "`"$cmdFile`" 2>&1")

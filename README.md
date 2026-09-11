@@ -3,8 +3,8 @@
 在 PowerShell 和 cmd.exe 里直接使用 `cp`、`rm`、`mv`、`mkdir`、`touch`、`grep`、
 `ls`、`cat`、`more`、`less`、`tail`、`vi/vim`、`sudo`、`su`、`ps`、`netstat`、
 `ss`、`ip`、`nmcli` 等常见 Linux 命令，保持 Linux 的命令习惯与参数选项
-（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **48 个命令**
-（49 个命令名，`vim` 是 `vi` 的别名）。
+（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **49 个命令**
+（50 个命令名，`vim` 是 `vi` 的别名）。
 
 - **纯 Go 原生实现**，编译为单个自包含的 `winux.exe`（约 3.7 MB），零外部依赖、
   零运行时（不需要 Python/WSL/MSYS2/Cygwin）。
@@ -61,6 +61,7 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 | `uname` | `-a -s -n -r -v -m -p -o`；如 `uname -a` → `Windows <主机名> 10.0.22631 x86_64 winux` |
 | `hostname` | `-s -d -f -i`；设置主机名会拒绝（需要管理员，且 winux 不做） |
 | `which` | `-a`；按 PATH+PATHEXT 查找，找不到退出码 1（同 GNU） |
+| `sh` | `-c SCRIPT` 或脚本文件；内置 POSIX 风格小 shell：heredoc（`<<EOF … EOF`）、管道 `\|`、重定向 `> >> < 2> 2>> 2>&1`、`&& \|\|`、单双引号、`$VAR`/`${VAR}`/`$?`、`NAME=值` 变量、`cd`/`exit`/`:`/`true`/`false` 内建（见「sh 说明」） |
 | `id` | `-u -g -G -n`；输出 POSIX 形态身份（uid/gid 恒为 1000，见限制） |
 | `whoami` | 当前用户 |
 | `sudo` | `-i -s -u -E -n`；在 Windows 上以 UAC 提权重跑命令/开管理员 shell（见下） |
@@ -252,6 +253,36 @@ Windows 没有 Linux 的 UID/GID 与 POSIX 权限位，`useradd` 等命令按 Wi
 - 布局为 GNU 风格 `块数\t路径`，目录总计时每行输出、最后是根目录自身；操作数
   不存在时报错并退出 1。
 
+## sh 说明
+
+`sh` 是 winux 内置的轻量 POSIX 风格 shell，解决两个宿主 shell 的短板：
+**PowerShell 和 cmd.exe 都不支持 heredoc（`<<EOF … EOF`）语法**，有了 `sh`
+之后两种 shell 都能写真正的多行输入脚本：
+
+```
+PS> winux sh -c "cat <<EOF`nhello 世界`nEOF"
+C> winux sh demo.sh（脚本文件里写）
+```
+
+支持的子集（与 bash 习惯一致）：
+
+- **heredoc**：`<<EOF`（正文里的 `$VAR` 会展开）、`<<'EOF'`（正文原样，不展开）；
+  正文从命令行的下一行开始，直到单独一行等于定界符。
+- **管道与条件**：`cmd1 | cmd2 | cmd3`（多级管道各阶段以 winux.exe 子进程串联）、
+  `;`、`&&`、`||`（退出码驱动，语义同 bash）。
+- **重定向**：`> file`（覆盖）、`>> file`（追加）、`< file`、`2> file`、`2>> file`、
+  `2>&1`（stderr 并入 stdout）。
+- **引号**：单引号原样、双引号内 `$VAR` 展开、`\` 只转义 shell 元字符
+  （`C:\Users\...`、`\\server\share` 里的反斜杠**原样保留**，Windows 路径友好）。
+- **变量**：`$VAR`、`${VAR}`、`$?`（上一条命令退出码）；`NAME=值 命令` 只对
+  该命令生效，单独 `NAME=值` 则持久（bash 同款语义）。
+- **内建**：`cd`、`exit [n]`、`:`、`true`、`false`；其余命令全部走 winux 命令表。
+- **三种用法**：`sh -c "脚本"`、`sh 脚本文件`、无参数（交互式 REPL，提示符 `sh>`；
+  非终端 stdin 时直接整段执行）。
+
+不支持（会按字面处理或报错）：`$(...)` 命令替换、`$((...))` 算术、布尔测试
+`[ ... ]`、后台 `&`（会警告并同步执行）。需要时用脚本文件 + 各命令的组合代替。
+
 ## 网络命令（只读策略）
 
 网络命令分两类：**只读查询**（`netstat`、`ss`、`ip a/link/route/neigh show`、
@@ -338,6 +369,14 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · 新增 `sh` 小 shell（heredoc 支持）**：PowerShell/cmd 都没有
+  heredoc 语法，现提供 `winux sh` 内置 POSIX 风格解释器：`<<EOF`/`<<'EOF'`
+  heredoc、管道 `|`、重定向 `> >> < 2> 2>> 2>&1`、`&& || ;`、单双引号与
+  `\` 转义（Windows 路径反斜杠原样保留）、`$VAR/${VAR}/$?` 展开、
+  `NAME=值` 变量、`cd exit : true false` 内建；用法 `sh -c "脚本"`、
+  `sh 脚本文件`、交互 REPL（`sh>`）。单命令在进程内跑命令表，多级管道各
+  阶段以 winux.exe 子进程串联；退出码语义同 bash（`$?`、`&&`/`||`）。
+  新增强制清单 `core/sh_test.go`（tokenize/parse/heredoc/展开/重定向端到端）。
 - **2026-09-11 · 修复 `vi/vim` 含中文（宽字符）行光标无法到行尾**：此前横向
   绘制/滚动/截断都把 rune 索引当屏幕列（宽字符占 2 列），中文行内光标会
   「卡」在文本中部、长行还会溢出换行；现新增 runewidth/cellWidth/truncToCells

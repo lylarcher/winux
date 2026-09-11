@@ -12,6 +12,7 @@ func TestCommandTableCoverage(t *testing.T) {
 		"cp", "rm", "touch", "vi", "mkdir", "mv", "sudo", "su", "grep",
 		"cat", "more", "less", "tail", "head", "wc", "sort", "uniq", "cut", "tr",
 		"ln", "echo", "pwd", "clear", "which", "whoami", "id", "uname", "date", "hostname", "cd",
+		"sh",
 	}
 	have := map[string]bool{}
 	for _, n := range core.CommandNames() {
