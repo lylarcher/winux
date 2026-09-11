@@ -317,6 +317,22 @@ try {
     Check 'du supports --exclude' (-not ((Text (& $winux du -a --exclude '*.txt' dudir)) -match 'a\.txt'))
     Check 'du on a missing path fails with exit 1' ((Invoke-CmdLine "`"$bin\du.cmd`" missing-xyz >nul 2>&1") -eq 1)
 
+    # ------------------------------------------------------------------- df --
+    Write-Host '== df section ==' -ForegroundColor Cyan
+
+    $workVol = (Split-Path $work -Qualifier).TrimEnd(':') + ':'
+    $dfAll = Text (& $winux df)
+    Check 'df prints the POSIX header and lists drives' (($dfAll -match '^Filesystem\s+\S+blocks\s+Used\s+Available\s+Use%\s+Mounted on') -and $dfAll -match [regex]::Escape($workVol)) $dfAll
+    Check 'df -h switches to human sizes' ((Text (& $winux df -h)) -match '^Filesystem\s+Size' -and (Text (& $winux df -h)) -match [regex]::Escape($workVol))
+    Check 'df -T prints the file system type column' ((Text (& $winux df -T)) -match '^Filesystem\s+Type')
+    Check 'df -B M rescales the numeric columns' ((Text (& $winux df -B M)) -match 'M-blocks')
+    $dfOne = Text (& $winux df $work)
+    $dfOneDrives = @($dfOne -split "`n" | Where-Object { $_ -match '^[A-Z]:\s' })
+    Check 'df restricts the listing to an operand drive' (($dfOneDrives.Count -eq 1) -and ($dfOneDrives[0] -match [regex]::Escape($workVol))) $dfOne
+    Check 'df --total -h appends a grand total row' ((Text (& $winux df --total -h)) -match '(?m)^total\s')
+    Check 'df -i explains that Windows has no inodes and fails' ((Invoke-CmdLine "`"$bin\df.cmd`" -i >nul 2>&1") -eq 1)
+    Check 'df rejects a nonexistent operand' ((Invoke-CmdLine "`"$bin\df.cmd`" Z:\definitely-not-a-drive >nul 2>&1") -eq 1)
+
     # ------------------------------------------------------------------- ln --
     Write-Host '== ln section ==' -ForegroundColor Cyan
 

@@ -3,8 +3,8 @@
 在 PowerShell 和 cmd.exe 里直接使用 `cp`、`rm`、`mv`、`mkdir`、`touch`、`grep`、
 `ls`、`cat`、`more`、`less`、`tail`、`vi/vim`、`sudo`、`su`、`ps`、`netstat`、
 `ss`、`ip`、`nmcli` 等常见 Linux 命令，保持 Linux 的命令习惯与参数选项
-（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **49 个命令**
-（50 个命令名，`vim` 是 `vi` 的别名）。
+（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **50 个命令**
+（51 个命令名，`vim` 是 `vi` 的别名）。
 
 - **纯 Go 原生实现**，编译为单个自包含的 `winux.exe`（约 3.7 MB），零外部依赖、
   零运行时（不需要 Python/WSL/MSYS2/Cygwin）。
@@ -64,6 +64,7 @@ call .\bin\deactivate.cmd   # cmd.exe
 | `pwd` | `-P -L` |
 | `clear` | 清屏（VT 转义） |
 | `date` | `-u -d -r -R -I -s +FORMAT`；`date +%F`、`date -d "yesterday"`；离线可用（内置时区数据） |
+| `df` | `-a -B SIZE -h -H -i -k -l -P -T -t TYPE -x TYPE --total`；默认 POSIX 布局 `Filesystem 1K-blocks Used Available Use% Mounted on`，盘符即文件系统，见「df 说明」 |
 | `du` | `-a -s -h -k -m -b -B SIZE -c -d N -x -L -H -P -0 -S -l -t SIZE --apparent-size --exclude PATTERN`；默认按磁盘占用（NTFS 实际分配大小）打印、1024 字节块，见「du 说明」 |
 | `uname` | `-a -s -n -r -v -m -p -o`；如 `uname -a` → `Windows <主机名> 10.0.22631 x86_64 winux` |
 | `hostname` | `-s -d -f -i`；设置主机名会拒绝（需要管理员，且 winux 不做） |
@@ -270,6 +271,29 @@ Windows 没有 Linux 的 UID/GID 与 POSIX 权限位，`useradd` 等命令按 Wi
 - 布局为 GNU 风格 `块数\t路径`，目录总计时每行输出、最后是根目录自身；操作数
   不存在时报错并退出 1。
 
+## df 说明
+
+`df` 报告磁盘空间使用，忠实实现 GNU 常用参数
+（`-a -B -h -H -i -k -l -P -T -t -x --total`）。Windows 语义诚实映射如下：
+
+- **文件系统 = 盘符**：列出 `GetLogicalDriveStrings` 返回的每个盘符（含 subst 与
+  映射网络盘），`C:` 即文件系统标识、`C:\` 即挂载点。默认输出稳定 POSIX 布局
+  （`-P` 形式）：
+  ```
+  Filesystem 1K-blocks      Used Available Use% Mounted on
+  C:         209715196 173534372  36180824  82% C:\
+  ```
+- **单位**：默认 1024 字节块；`-h` 人类可读（1024 幂，GNU 格式 1K/234M/2G）、
+  `-H` 用 1000 幂；`-B SIZE` 按 GNU SIZE 解析（`512`、`1M`、`KB`、`2GB`……）。
+- **列与过滤**：`-T` 在 Filesystem 后加 Type 列（NTFS/FAT32/CDFS…，来自
+  GetVolumeInformation）；`-t TYPE` 只列指定类型、`-x TYPE` 排除（可重复，
+  大小写不敏感）；`-l` 只列本地盘（跳过网络盘）。
+- **范围与总数**：带参数时只列参数所在盘（盘符 `C:`/`C:\` 须为真实盘、路径须
+  存在，否则报错退出 1，同 GNU）；`--total` 追加合计行；`-a` 连不可查询的盘
+  （如无光盘的 CD-ROM）也列出（尺寸列显示 `-`）。
+- **`-i/--inodes` 不支持**：Windows 没有 inode 概念，Win32 不提供卷级 inode 数，
+  按项目诚实原则明确报错退出 1（而非编造数字）。
+
 ## sh 说明
 
 `sh` 是 winux 内置的轻量 POSIX 风格 shell，解决两个宿主 shell 的短板：
@@ -386,6 +410,15 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · 新增 `df`**：报告磁盘空间使用，默认稳定 POSIX 布局
+  `Filesystem 1K-blocks Used Available Use% Mounted on`；文件系统=盘符（含 subst
+  与映射网络盘，用 kernel32 GetLogicalDriveStrings/GetDiskFreeSpaceEx/
+  GetVolumeInformation/GetDriveType，零外部依赖）。支持 `-a -B -h -H -i -k -l
+  -P -T -t TYPE -x TYPE --total`；`-i` 因 Windows 无 inode 概念诚实报错退出 1；
+  带操作数时限制到所在盘（盘符/路径须存在，同 GNU）；`-a` 连空光驱也列出。
+  新增单元测试（块大小解析/百分比/SI 人类可读/盘根映射/表格排版）与 smoke
+  df 段 8 项，共 166 项全绿。修复过程中发现并修正 `driveRootOf` 丢失盘符冒号
+  的 bug（`C:\` 曾被解析成 `C\`，导致按操作数过滤永远为空）。
 - **2026-09-11 · `cd -` 全面可用**：上一目录不再依赖 PS 环境变量，winux 把
   最近一次成功 `cd` 前的位置持久化到 `%LOCALAPPDATA%\winux\oldpwd`（可用
   `WINUX_OLDPWD_FILE` 覆盖），PowerShell 钩子、cmd doskey 宏（改为经 winux
