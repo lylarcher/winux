@@ -361,6 +361,17 @@ EOF
     $status = & $winux sh -c "exit 42"
     Check 'sh exit builtin sets the exit code' ($LASTEXITCODE -eq 42) "exit=$LASTEXITCODE"
 
+    # ---------------------------------------------------------- deactivate --
+    Write-Host '== deactivate section ==' -ForegroundColor Cyan
+
+    . (Join-Path $bin 'deactivate.ps1')
+    Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
+    Check 'deactivate cleared the activation markers' ((($null -eq $env:WINUX_ACTIVE) -and ($null -eq $env:WINUX_STATE)) -and ($null -eq $env:WINUX_OLD_PATH))
+    Check 'deactivate removed winux from PATH' (($env:Path -split ';') -notcontains $bin) (($env:Path -split ';' | Where-Object { $_ -eq $bin }) -join ',')
+    cd $work\src
+    Check 'cd (Set-Location) still works after deactivate' ((Get-Location).Path -eq (Join-Path $work 'src'))
+    cd $work
+
     # ----------------------------------------------------------------- network --
     if ($Network) {
         Write-Host '== network section (read-only) ==' -ForegroundColor Cyan
@@ -429,6 +440,9 @@ call "$bin\rm.cmd" -f cmdtest/fslash.txt
 if exist cmdtest\fslash.txt (echo FAIL forward-slash rm & exit /b 12)
 call "$bin\sh.cmd" cmdheredoc.sh > shout.txt
 findstr heredoc-cmd-ok shout.txt >nul || (echo FAIL sh-heredoc & exit /b 13)
+call "$bin\deactivate.cmd" >nul
+if defined WINUX_ACTIVE (echo FAIL deactivate & exit /b 14)
+doskey /macros | findstr /ic:"mkdir" >nul && (echo FAIL deactivate-macros & exit /b 14)
 echo cmdtest-ok
 exit /b 0
 "@

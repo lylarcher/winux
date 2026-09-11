@@ -29,6 +29,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/echo/date`
 的 doskey 宏，见下文「cmd.exe 内建命令」一节）。
 
+退出激活（撤销 PATH/别名/宏/环境标记，恢复到激活前状态）：
+
+```powershell
+. .\bin\deactivate.ps1      # PowerShell
+call .\bin\deactivate.cmd   # cmd.exe
+```
+
 ## 已实现命令
 
 | 命令 | 说明与常用选项 |
@@ -369,6 +376,12 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · 新增 `deactivate.ps1` / `deactivate.cmd`**：反向撤销激活——
+  PowerShell 侧还原快照中被遮蔽的别名（PS 默认 `cd/ls/pwd/cat/ps` 等及用户
+  自定义别名，激活时写入每会话快照文件）、移除 `cd` 函数、恢复 `WINUX_OLD_PATH`
+  快照的 PATH、清除 `WINUX_ACTIVE/WINUX_STATE/WINUX_PREVDIR` 标记；cmd 侧清除
+  doskey 宏、恢复 PATH 与清除环境变量。smoke 新增 PS deactivate 段 4 项 +
+  cmd 批处理 deactivate 2 项。
 - **2026-09-11 · 新增 `sh` 小 shell（heredoc 支持）**：PowerShell/cmd 都没有
   heredoc 语法，现提供 `winux sh` 内置 POSIX 风格解释器：`<<EOF`/`<<'EOF'`
   heredoc、管道 `|`、重定向 `> >> < 2> 2>> 2>&1`、`&& || ;`、单双引号与
