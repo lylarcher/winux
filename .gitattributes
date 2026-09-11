@@ -1,0 +1,33 @@
+# winux — repository attributes.
+#
+# Project convention: all source text files are LF. These rules normalise the
+# whole tree to LF on checkout (nothing is rewritten now — every source file
+# already is LF) and keep generated binaries out of any text normalisation.
+
+* text=auto
+
+# Text files — force LF, never CRLF
+*.go     text eol=lf
+*.md     text eol=lf
+*.mod    text eol=lf
+*.sum    text eol=lf
+*.ps1    text eol=lf
+*.cmd    text eol=lf
+*.bat    text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Generated/binary files — never normalise
+*.exe  binary
+*.dll  binary
+*.so   binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
