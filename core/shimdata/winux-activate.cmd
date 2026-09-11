@@ -1,9 +1,20 @@
 @echo off
-rem Activate the winux Linux-style commands in this cmd.exe session.
-rem   call C:\path\to\winux\bin\cmd\winux-activate.cmd
-rem   or, with winux.exe on PATH:  for /f "delims=" %l in ('winux activate') do @%l
-set "WINUX_SHIMS=%~dp0"
-for %%E in ("%~dp0..") do set "WINUX_EXE=%%~fE"
+rem winux session setup for cmd.exe.
+rem This file is materialized in TWO places from the same embedded template:
+rem   <exe dir>\winux-activate.cmd        - typing `winux-activate` works when
+rem                                         winux.exe's dir is on PATH
+rem   <exe dir>\cmd\winux-activate.cmd    - referenced by the `winux activate`
+rem                                         call line / for /f one-liner
+rem It locates the shims dir from its own path, so the same content works in
+rem both spots: if the parent directory holds winux.exe we are inside cmd\,
+rem otherwise we sit next to winux.exe and the shims are in the cmd\ subdir.
+if exist "%~dp0..\winux.exe" (
+    set "WINUX_SHIMS=%~dp0"
+    for %%E in ("%~dp0..") do set "WINUX_EXE=%%~fE"
+) else (
+    set "WINUX_SHIMS=%~dp0cmd\"
+    for %%E in ("%~dp0.") do set "WINUX_EXE=%%~fE"
+)
 if not defined WINUX_OLD_PATH set "WINUX_OLD_PATH=%PATH%"
 set "PATH=%WINUX_SHIMS%;%WINUX_EXE%;%PATH%"
 set "WINUX_ACTIVE=1"

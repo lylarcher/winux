@@ -26,24 +26,32 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 # 3) 激活当前会话（任意目录执行；winux 会识别父 shell 并打印对应的一行）：
 winux activate | iex                                  # PowerShell
-for /f "delims=" %l in ('winux activate') do @%l      # cmd.exe
+winux-activate                                        # cmd.exe（winux 目录已在 PATH，直接输入即可）
+for /f "delims=" %l in ('winux activate') do @%l      # cmd.exe（不用上面那个名字时的通用写法）
 ```
 
 退出激活（撤销 PATH/别名/宏/环境标记，恢复到激活前状态）：
 
 ```powershell
-winux deactivate | iex                                  # PowerShell
-for /f "delims=" %l in ('winux deactivate') do @%l      # cmd.exe
+winux deactivate | iex                                # PowerShell
+winux-deactivate                                      # cmd.exe
+for /f "delims=" %l in ('winux deactivate') do @%l    # cmd.exe
 # 或直接（不依赖 PATH）：
 . .\bin\winux-deactivate.ps1        # PowerShell
 call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 ```
 
 > **布局与命名**：`winux.exe` 与 `cmd\` 目录并排。全部 `.cmd` 垫片与激活辅助
-> 脚本（`winux-activate.ps1`/`winux-deactivate.ps1`、`cmd\winux-*.cmd`）都
-> **内嵌在 winux.exe 里**，由 `winux activate`（或 `winux shims`）按 **md5 增量**
-> 解压到 exe 旁：文件不存在则创建，存在且 md5 相同则跳过（不重写、不动时间戳），
-> md5 不同才覆盖。因此把 winux.exe 单独拷到任何目录都能就地重建 `cmd\`。
+> 脚本（`winux-activate.ps1`/`winux-deactivate.ps1`、`winux-activate.cmd`/
+> `winux-deactivate.cmd`、`cmd\winux-*.cmd`）都**内嵌在 winux.exe 里**，由
+> `winux activate`（或 `winux shims`）按 **md5 增量**解压到 exe 旁：文件不存在
+> 则创建，存在且 md5 相同则跳过（不重写、不动时间戳），md5 不同才覆盖。
+> 因此把 winux.exe 单独拷到任何目录都能就地重建 `cmd\`。
+> `winux-activate.cmd`/`winux-deactivate.cmd` 会解压到**两处**（内容相同、
+> 自定位）：`cmd\` 里供 `winux activate` 打印的 call 行引用，以及 **winux.exe
+> 旁边**——因为 winux.exe 目录就在 PATH 上，cmd 里直接输入 `winux-activate`
+> 一个词即可激活当前会话，无需 for /f、无需复制粘贴（PowerShell 无此捷径，
+> 请用 `winux activate | iex`）。
 > 只有 `winux.exe` 的目录需要进 PATH（`winux` 到处可用）；垫片不进 PATH、
 > 不激活时不会遮蔽任何原生命令。辅助脚本一律 `winux-` 前缀，所以把 `bin\`
 > 加进系统 PATH 后不会引入裸 `activate`/`deactivate` 名字，不会与
@@ -73,9 +81,11 @@ call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 （PowerShell 还是 cmd.exe，`--shell` 可覆盖）后打印一行让 shell 自己执行的
 代码——PowerShell 打 `. '…\winux-activate.ps1'`（配
 `| iex` 执行），cmd 打 `call "…\cmd\winux-activate.cmd"`（配
-`for /f "delims=" %l in ('winux activate') do @%l` 执行）。这样只要有
-`winux` 就能在任意位置激活，不再需要 install.ps1（install 只是把「全局
-winux + 每窗口自动激活」自动化）。
+`for /f "delims=" %l in ('winux activate') do @%l` 执行）。cmd 里还有更省事的
+一条路：`winux-activate.cmd` 同时解压在 winux.exe 旁，而 winux.exe 目录就在
+PATH 上，所以**直接输入 `winux-activate` 一个词**就能激活（`winux-deactivate`
+同理），连 for /f 都不用。这样只要有 `winux` 就能在任意位置激活，不再需要
+install.ps1（install 只是把「全局 winux + 每窗口自动激活」自动化）。
 
 `activate` 具体做三件事（都是会话级）：
 

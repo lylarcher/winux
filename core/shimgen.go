@@ -81,6 +81,14 @@ func embeddedFiles() ([]embeddedFile, error) {
 			out = append(out, embeddedFile{src: rel, target: e.Name()})
 		} else {
 			out = append(out, embeddedFile{src: rel, target: filepath.Join("cmd", e.Name())})
+			// winux-activate.cmd / winux-deactivate.cmd are ALSO materialized
+			// next to winux.exe: since the exe dir is the directory on PATH,
+			// typing `winux-activate` / `winux-deactivate` at a cmd prompt then
+			// activates the current session directly (no for /f, no copy-paste).
+			// The batch self-locates, so one embedded copy serves both spots.
+			if e.Name() == "winux-activate.cmd" || e.Name() == "winux-deactivate.cmd" {
+				out = append(out, embeddedFile{src: rel, target: e.Name()})
+			}
 		}
 	}
 	return out, nil

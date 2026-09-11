@@ -150,7 +150,11 @@ func emitActivate(args []string, name, psFile, cmdFile string) int {
 		if shell == "powershell" {
 			fmt.Fprintf(os.Stderr, "提示: 完成%s请执行  winux %s | iex\n", name, name)
 		} else {
-			fmt.Fprintf(os.Stderr, "提示: 完成%s请执行  for /f \"delims=\" %%l in ('winux %s') do @%%l\n", name, name)
+			// cmd has no `iex`: the printed `call ...` line can be pasted as-is,
+			// and since winux-activate.cmd / winux-deactivate.cmd are also
+			// materialized next to winux.exe (the dir on PATH), typing the short
+			// name works too.
+			fmt.Fprintf(os.Stderr, "提示: 复制上一行执行，或直接输入 winux-%s\n", name)
 		}
 	}
 	return 0

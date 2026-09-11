@@ -506,6 +506,33 @@ exit /b 0
     $cmdOut = Text (& cmd /c "`"$cmdFile`" 2>&1")
     Check 'cmd.exe batch: mkdir/cp/rm/grep/wc/tail/head/touch/cat' ($cmdOut -match 'cmdtest-ok') $cmdOut
 
+    # winux-activate.cmd / winux-deactivate.cmd are ALSO materialized next to
+    # winux.exe (the dir that is on PATH), so typing the bare name activates the
+    # current cmd session directly — no for /f, no copy-paste.
+    Check 'winux-activate.cmd / winux-deactivate.cmd sit next to winux.exe' `
+        ((Test-Path (Join-Path $bin 'winux-activate.cmd')) -and (Test-Path (Join-Path $bin 'winux-deactivate.cmd')))
+    $oneWordScript = @"
+@echo off
+set "PRE=$bin;%PATH%"
+set "PATH=%PRE%"
+rem interactive prompts run a batch by name and return; inside another batch
+rem the same lookup needs `call` (the classic batch-in-batch rule) - the bare
+rem name proves PATH resolution finds winux-activate.cmd next to winux.exe
+call winux-activate >nul
+if not defined WINUX_ACTIVE (echo FAIL one-word-activate & exit /b 31)
+if /i not "%WINUX_SHIMS%"=="$shims\" (echo FAIL one-word-shims=%WINUX_SHIMS% & exit /b 32)
+call winux-deactivate >nul
+if defined WINUX_ACTIVE (echo FAIL one-word-deactivate & exit /b 33)
+if /i not "%PATH%"=="%PRE%" (echo FAIL one-word-path & exit /b 34)
+echo one-word-ok
+exit /b 0
+"@
+    $oneWordFile = Join-Path $work 'oneword.cmd'
+    Set-Content -Path $oneWordFile -Value $oneWordScript -Encoding ascii
+    $oneWordOut = Text (& cmd /c "`"$oneWordFile`" 2>&1")
+    Check 'cmd.exe: typing winux-activate / winux-deactivate activates and restores' `
+        ($oneWordOut -match 'one-word-ok') $oneWordOut
+
     # Interactive cmd sessions expand the doskey macros (they are processed by
     # the console command-line editor, which is why piped/redirected input does
     # not trigger them). Verify the exact macro definitions here.

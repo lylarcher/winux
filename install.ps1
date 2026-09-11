@@ -99,6 +99,7 @@ Write-Host '  cmd.exe    :  mkdir -p a\b  (via doskey macros);  or call bin\cmd\
 Write-Host ''
 Write-Host 'Activation is also available on demand (winux.exe on PATH):' -ForegroundColor Yellow
 Write-Host ('  winux activate | iex                    (PowerShell)')
-Write-Host ('  for /f "delims=" %l in (''winux activate'') do @%l   (cmd.exe)')
+Write-Host ('  winux-activate                          (cmd.exe, one word)')
+Write-Host ('  for /f "delims=" %l in (''winux activate'') do @%l   (cmd.exe, generic)')
 Write-Host ("  . {0}\winux-activate.ps1                     (PowerShell, direct)" -f $bin)
 Write-Host ("  call {0}\cmd\winux-activate.cmd               (cmd.exe, direct)" -f $bin)

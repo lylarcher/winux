@@ -3,6 +3,14 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · cmd 激活一键化**：`winux-activate.cmd`/`winux-deactivate.cmd`
+  改为**自定位**（根据自身位置推算垫片目录：在 `cmd\` 里则 exe 上一级，在
+  exe 旁则垫片在 `cmd\` 子目录），同一份内嵌模板解压到**两处**——`cmd\`
+  供 `winux activate` 的 call 行引用，以及 **winux.exe 旁**（winux.exe 目录
+  在 PATH 上，cmd 里直接输入 `winux-activate` / `winux-deactivate` 一个词即
+  可激活/反激活当前会话，无需 for /f、无需复制粘贴）。`winux activate` 的
+  cmd 提示也缩短为「复制上一行执行，或直接输入 winux-xxx」。smoke 新增
+  一键激活断言（172 项全绿）。
 - **2026-09-11 · 修复非 Windows 交叉编译**：`sys.go`/`ip.go` 之前引用只在
   `*_windows.go` 里定义的类型/常量，Linux 构建报错。新增共享文件
   `core/nettypes.go`（无 build tag），迁入 `sockRow`/`routeRow`/`ifRow`/
