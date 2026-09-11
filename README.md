@@ -36,6 +36,57 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 call .\bin\deactivate.cmd   # cmd.exe
 ```
 
+## 激活原理（venv 式会话机制）
+
+`activate` 的工作方式与 **Python venv 的激活**同模型：只对**当前终端会话**
+生效，改的是**当前 shell 进程的环境变量**，不碰磁盘上任何原生文件；关掉该
+窗口或执行 `deactivate` 即完全还原。它**不会**改系统/用户 PATH 注册表
+（不动 `setx`、不写注册表、不需要管理员），`bin\` 里的文件也始终留在项目
+目录，不复制、不移动、不删除。
+
+与 venv 的对应关系：
+
+| venv | winux |
+|---|---|
+| `Scripts\activate.ps1`：加 `Scripts` 到 PATH + 设 `VIRTUAL_ENV` | `activate.ps1`：加 `bin` 到 PATH + 设 `WINUX_ACTIVE`，并删除 PS 同名别名 |
+| 只对当前终端进程生效，别的窗口不受影响 | 完全一样，每个窗口独立 |
+| 关窗口/新开窗口即失效 | 一样（无任何持久状态） |
+| `deactivate` 恢复 PATH | `deactivate` 恢复 PATH + **精确还原被删的别名**（快照）+ 清 cmd 的 doskey 宏 |
+| 不激活也能用 `venv\Scripts\python.exe` | 不激活也能用 `winux cp ...` 或直接调 `bin\cp.cmd` |
+
+`activate` 具体做三件事（都是会话级）：
+
+1. **前置 PATH**：把 `bin\` 插到当前会话 `$env:Path` 最前，让垫片 `xxx.cmd`
+   在名字解析时先于 System32 里的原生 exe 被找到；原 PATH 存入
+   `WINUX_OLD_PATH` 供 deactivate 精确还原。
+2. **删除 PowerShell 同名别名/函数**：PS 里 `cp/ls/cat/ps/echo` 等本是**别名**
+   （指向 `Copy-Item`/`Get-ChildItem`…），别名解析优先于 PATH，不删掉就轮不到
+   垫片。删的是别名，`Copy-Item` 等 cmdlet 本身一直都在；被删的别名会快照到
+   每会话临时文件，deactivate 按原样还原。
+3. **安装 cmd 的 doskey 宏**（`activate.cmd`）：`mkdir/echo/date` 是 cmd
+   **内建命令**，内建优先级高于 PATH，垫片抢不到，所以用宏把输入行改写；
+   宏只作用于该交互窗口的行编辑器，窗口一关即失效，连子 cmd 进程都不继承。
+
+名字解析优先级（这就是「遮蔽」而非「替换」的原理）：
+
+- PowerShell：`别名/函数 → cmdlet → PATH 外部命令`
+- cmd.exe：`内建命令 → PATH 外部命令`
+
+所以 winux 只是让 `cp` 这个名字在**这个会话里**先解析到 `bin\cp.cmd →
+winux.exe cp`；`C:\Windows\System32\sort.exe`、cmd 的 `mkdir` 内建等原生
+文件原地未动，只是暂时排不到。两个值得知道的细节：
+
+- **子进程会继承**：激活窗口里启动的子程序（含嵌套的 `powershell.exe`）继承
+  PATH 与 `WINUX_ACTIVE`，也能用 winux 命令；但 `cd` 函数和「已删除的别名」
+  是进程内状态，不会传给子 shell。
+- **`cd -` 有一个跨会话的小残留**：上一目录存在 `%LOCALAPPDATA%\winux\oldpwd`
+  小文件（故意设计，让 PS 钩子/cmd 宏/sh 内建三入口共享），不随窗口关闭
+  消失，无副作用，deactivate 也不删它。
+
+只有 `install.ps1` 是「永久」路线：把 `bin\` 写入**用户** PATH 并在
+PowerShell `$PROFILE` 末尾追加一行 activate，从此新开窗口自动生效——那是
+venv 之外另一种显式选择。
+
 ## 已实现命令
 
 | 命令 | 说明与常用选项 |
@@ -410,6 +461,11 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · README 新增「激活原理（venv 式会话机制）」一节**：讲清
+  activate/deactivate 的会话级模型——只改当前终端进程的 PATH/别名/宏，不改
+  系统 PATH 注册表、不替换不删除任何原生文件（优先级遮蔽而非覆盖）、关窗口
+  即还原；含与 Python venv 的对照表、名字解析优先级、子进程继承与 `cd -`
+  状态文件残留等细节。
 - **2026-09-11 · 新增 `df`**：报告磁盘空间使用，默认稳定 POSIX 布局
   `Filesystem 1K-blocks Used Available Use% Mounted on`；文件系统=盘符（含 subst
   与映射网络盘，用 kernel32 GetLogicalDriveStrings/GetDiskFreeSpaceEx/
