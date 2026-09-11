@@ -105,6 +105,7 @@ rem Activate the winux Linux-style commands in this cmd.exe session.
 rem   call C:\path\to\winux\bin\activate.cmd
 set "WINUX_BIN=%~dp0"
 set "PATH=%WINUX_BIN%;%PATH%"
+set "WINUX_ACTIVE=1"
 rem cmd.exe resolves its own internal commands before PATH, so bind those names
 rem to winux with doskey macros (interactive sessions only, batch files unaffected).
 rem `cd /d` is the one cmd built-in that can cross drives, so `cd D:\some\dir`
@@ -139,6 +140,10 @@ foreach ($name in $shimNames) {
 if (($env:Path -split ';') -notcontains $winuxBin) {
     $env:Path = "$winuxBin;$env:Path"
 }
+
+# Marks this session as activated so `winux cd` knows the shell hook (the cd
+# function below) is in place and skips the "activate first" hint.
+$env:WINUX_ACTIVE = '1'
 
 # An external process cannot change the parent shell's working directory, so
 # `cd` is a function: winux resolves/validates the target (cross-drive, ~, -,

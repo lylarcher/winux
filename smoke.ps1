@@ -184,6 +184,10 @@ try {
     cd $work
     $resolved = Text (& $winux cd "$work\src")
     Check 'winux cd prints an absolute backslash path' ($resolved -eq (Join-Path $work 'src')) "got $resolved"
+    $env:WINUX_ACTIVE = $null
+    $hintRun = Text (& cmd /c "`"$winux`" cd `"$work\src`" 2>&1")
+    $env:WINUX_ACTIVE = '1'
+    Check 'direct winux cd explains the activate-first hint' ($hintRun -match 'activate' -and $hintRun -match 'src') $hintRun
     $code = Invoke-CmdLine "`"$winux`" cd no-such-dir-xyz >nul 2>&1"
     Check 'winux cd fails for a missing directory' ($code -eq 1) "exit=$code"
     $curDrive = Split-Path (Get-Location).Path -Qualifier

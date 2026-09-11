@@ -68,6 +68,16 @@ func cmdCd(args []string) int {
 		return 1
 	}
 	fmt.Println(resolved)
+	// A direct `winux.exe cd DIR` cannot change the parent shell's directory
+	// (no child process can). When this session is not activated, the printed
+	// path looks like a successful cd, so say plainly what happened and how to
+	// get the real thing. The stderr hint never pollutes the stdout captured by
+	// the activate.ps1 cd function (which runs with WINUX_ACTIVE set).
+	if os.Getenv("WINUX_ACTIVE") == "" {
+		fmt.Fprintln(os.Stderr, "提示: 子进程无法改变所在 shell 的工作目录, 这里只打印了目标路径。")
+		fmt.Fprintln(os.Stderr, "请先激活 winux 再直接使用 cd: PowerShell 执行 . activate.ps1, cmd 执行 call activate.cmd,")
+		fmt.Fprintln(os.Stderr, "之后 cd 命令的跨盘切换、cd -、cd ~、cd / 才会真正生效。")
+	}
 	return 0
 }
 
