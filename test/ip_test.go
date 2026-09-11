@@ -94,10 +94,21 @@ func TestNmcliAndNmtui(t *testing.T) {
 			t.Errorf("%v: code=%d err=%q (want refusal)", c, code, errOut)
 		}
 	}
-	// nmtui explains and fails
-	code, _, errOut = run(t, "", "nmtui")
-	if code != 1 || !strings.Contains(errOut, "NetworkManager") {
-		t.Fatalf("nmtui: code=%d err=%q", code, errOut)
+	// nmtui launches the Windows control panel; its argument validation is
+	// covered by TestNmtuiValidation below (the real launch would pop a GUI).
+}
+
+// nmtui maps to the Windows Network Connections panel (ncpa.cpl). Only the
+// argument surface is unit-tested here: the actual launch opens a GUI window
+// and is exercised manually / in interactive smoke runs.
+func TestNmtuiValidation(t *testing.T) {
+	code, out, errOut := run(t, "", "nmtui", "--help")
+	if code != 0 || !strings.Contains(out, "Usage:") {
+		t.Fatalf("nmtui --help: code=%d out=%q err=%q", code, out, errOut)
+	}
+	code, _, errOut = run(t, "", "nmtui", "bogus-subcommand")
+	if code != 1 || !strings.Contains(errOut, "unknown command") {
+		t.Fatalf("nmtui bogus: code=%d err=%q (want unknown-command error)", code, errOut)
 	}
 }
 

@@ -2,12 +2,15 @@ package core
 
 // ipconfig wraps the real Windows ipconfig.exe; `ip`, `nmcli` and `nmtui`
 // emulate the iproute2/NetworkManager command surfaces over the native adapter
-// data. Every command in this file is strictly read-only: subcommands that
-// would change the network state are refused with the native alternative.
+// data. The query commands are strictly read-only: subcommands that would
+// change the network state are refused with the native alternative. `nmtui`
+// does not mutate anything either: it opens the Windows Network Connections
+// panel (ncpa.cpl) where the user can operate on adapters by hand.
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,7 +20,7 @@ func init() {
 	addCmd("ipconfig", "display IP configuration (wraps ipconfig.exe)", cmdIpconfig)
 	addCmd("ip", "show/manipulate network interfaces and routing (read-only)", cmdIp)
 	addCmd("nmcli", "query network devices and connections (NetworkManager style)", cmdNmcli)
-	addCmd("nmtui", "text user interface for networking (not available on Windows)", cmdNmtui)
+	addCmd("nmtui", "open the Windows Network Connections panel (ncpa.cpl)", cmdNmtui)
 }
 
 // -------------------------------------------------------------- ipconfig -----
@@ -520,6 +523,15 @@ func nmcliGeneral(rest []string) int {
 
 // ------------------------------------------------------------------ nmtui ----
 
+// cmdNmtui maps the NetworkManager text UI to the real Windows surfaces, so
+// `nmtui` in a shell behaves like the tool the user expects:
+//
+//	nmtui            → 控制面板\网络和 Internet\网络连接  (ncpa.cpl)
+//	nmtui edit NAME  → same panel (connection management lives there)
+//	nmtui connect    → same panel
+//	nmtui hostname   → “重命名这台电脑” settings page (ms-settings:system-about)
+//
+// The GUI helper is started detached and nmtui returns immediately.
 func cmdNmtui(args []string) int {
 	f := NewFlags()
 	if !parseOrDie("nmtui", f, args) {
@@ -528,7 +540,39 @@ func cmdNmtui(args []string) int {
 	if handleHelpVersion("nmtui", "[edit|connect|hostname]", f) {
 		return 0
 	}
-	fmt.Fprintln(os.Stderr, "nmtui: this text UI belongs to NetworkManager, which Windows does not have.")
-	fmt.Fprintln(os.Stderr, "Use `ipconfig`, `ip addr`, `nmcli device status` or the Windows Settings app instead.")
-	return 1
+	sub := ""
+	if len(f.Positional) > 0 {
+		sub = f.Positional[0]
+	}
+	switch sub {
+	case "", "edit", "connect":
+		fmt.Println("nmtui: opening Network Connections (控制面板\\网络和 Internet\\网络连接, ncpa.cpl)")
+		if err := launchDetached("control.exe", "ncpa.cpl"); err != nil {
+			warn("nmtui", "cannot open the Network Connections panel: %v", err)
+			fmt.Fprintln(os.Stderr, "nmtui: use `ipconfig`, `ip addr` or `nmcli device status` in a terminal instead")
+			return 1
+		}
+		return 0
+	case "hostname":
+		fmt.Println("nmtui: opening the 'Rename this PC' settings page (ms-settings:system-about)")
+		if err := launchDetached("explorer.exe", "ms-settings:system-about"); err != nil {
+			warn("nmtui", "cannot open the rename page: %v", err)
+			return 1
+		}
+		return 0
+	default:
+		warn("nmtui", "unknown command '%s'; supported subcommands: edit, connect, hostname", sub)
+		return 1
+	}
+}
+
+// launchDetached starts a GUI helper process without waiting for it, so the
+// caller returns while the panel keeps running.
+func launchDetached(name, arg string) error {
+	cmd := exec.Command(name, arg)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	cmd.Process.Release()
+	return nil
 }

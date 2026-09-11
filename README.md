@@ -80,7 +80,7 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 | `ipconfig` | 默认直通系统 `ipconfig.exe`；`--help`/`--version` 为 winux 自带；`/release /renew /flushdns` 等改网操作被拒绝（见下「网络只读」） |
 | `ip` | `addr/link/route/neigh` 的 `show`（含 `-4 -6 -br -o`）；iproute2 输出风格；一切改网子命令（`addr add`、`link set`、`route add`…）拒绝并提示原生替代 |
 | `nmcli` | `device status/show`、`connection show`、`general status/permissions/hostname`；改网子命令拒绝（Windows 无 NetworkManager，列表由适配器推导） |
-| `nmtui` | 说明 Windows 没有 NetworkManager 文本界面后退出 1，建议改用 `ip addr`/`nmcli`/设置应用 |
+| `nmtui` | 执行即调出 Windows「网络连接」面板（`ncpa.cpl`，对应 控制面板\网络和 Internet\网络连接）；`nmtui hostname` 打开「重命名这台电脑」设置页；`edit/connect` 同面板（见「网络命令（只读策略）」末尾） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -271,6 +271,10 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
   读同一份表。
 - `ipconfig` 默认直通系统 `ipconfig.exe`（`ipconfig /all` 可用），只有
   `/release /renew /flushdns` 等改网参数被拒绝。
+- `nmtui` 不做任何查询/修改：它直接调出 Windows 原生的**网络连接**面板
+  （`control.exe ncpa.cpl`，即 控制面板\网络和 Internet\网络连接），把
+  NetworkManager 文本界面的「连接管理」职责交给 Windows 图形界面（用户自己
+  在面板里操作）；`nmtui hostname` 打开设置里的「重命名这台电脑」页。
 - **网络相关测试必须显式开启**：单元测试默认跳过网络用例，设环境变量
   `WINUX_NET_TESTS=1` 才运行（都是只读查询与「拒绝」用例）；
   冒烟测试的网络段落需 `smoke.ps1 -Network`。请先确认自己明白这些是只读操作再开。
@@ -334,6 +338,9 @@ winux/
 
 ## 更新记录
 
+- **2026-09-11 · `nmtui` 改为调出 Windows 网络连接面板**：执行 `nmtui`
+  打开 `ncpa.cpl`（控制面板\网络和 Internet\网络连接），`edit/connect` 同一面板，
+  `hostname` 打开「重命名这台电脑」设置页。
 - **2026-09-11 · 新增 `du` 与完整 `ln`**：`du` 支持 `-a -s -h -k -m -b -B -c -d -x
   -L -H -l -S -t -0 --apparent-size --exclude`，NTFS 实际分配大小统计；`ln` 补齐
   `-t -i -n -b[=METHOD] -r -T -L -P`（备份/相对链接/目标目录/交互提示），`-d`
