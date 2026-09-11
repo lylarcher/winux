@@ -153,7 +153,7 @@ try {
     $help = Text (& $winux --help)
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
-            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps',
+            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps', 'ls',
             'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
@@ -262,6 +262,28 @@ try {
     Check 'ps -p lists our own process' ($pself -match "$self")
     & $winux ps --sort=-%cpu -e | Out-Null
     Check 'ps --sort=-%cpu works' ($LASTEXITCODE -eq 0) "exit=$LASTEXITCODE"
+
+    # ------------------------------------------------------------------- ls --
+    Write-Host '== ls section ==' -ForegroundColor Cyan
+
+    Set-Content -Path note.txt -Value 'n' -Encoding ascii -NoNewline
+    New-Item -ItemType Directory -Force -Path lsdir | Out-Null
+    Set-Content -Path lsdir/a.txt -Value 'a' -Encoding ascii -NoNewline
+    Set-Content -Path lsdir/z.txt -Value 'z' -Encoding ascii -NoNewline
+    Set-Content -Path lsdir/run.cmd -Value 'r' -Encoding ascii -NoNewline
+
+    $lsPlain = Text (ls)
+    Check 'ls lists the directory contents' ($lsPlain -match 'note\.txt' -and $lsPlain -match 'lsdir')
+    $lsLong = Text (ls -l)
+    Check 'ls -l shows modes and a total line' ($lsLong -match 'total ' -and $lsLong -match 'drwxr-xr-x')
+    Check 'ls -l shows the owner column' ($lsLong -match [regex]::Escape((Text (whoami)).Split('\')[-1]))
+    Check 'ls -F classifies entries' ((Text (ls -F)) -match 'lsdir/' -and (Text (ls -F lsdir)) -match 'run\.cmd\*')
+    Check 'ls -a lists dot entries' ((Text (ls -a)) -match '(?m)^\.\.\s*$')
+    Check 'ls -S sorts by size' (($LASTEXITCODE -eq 0))
+    Check 'ls dir operand lists a subdirectory' ((Text (ls lsdir)) -match 'a\.txt')
+    Check 'ls -R recurses with headers' ((Text (ls -R)) -match 'lsdir:')
+    $code = Invoke-CmdLine "`"$bin\ls.cmd`" missing-xyz >nul 2>&1"
+    Check 'ls on a missing path fails with exit 2' ($code -eq 2) "exit=$code"
 
     # ----------------------------------------------------------------- network --
     if ($Network) {

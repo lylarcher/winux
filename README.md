@@ -37,6 +37,7 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 | `mkdir` | `-p -m -v`；`mkdir -p a/b/c` |
 | `touch` | `-c -a -m -d -r -t`；`touch -t 202401020304.05 f`、`touch -d "2024-01-02 03:04:05" f` |
 | `ln` | `-s -f -v`；符号链接需要开发者模式或管理员权限（否则给出提示），硬链接 `ln -v` 无需权限 |
+| `ls` | `-a -A -d -l -h -s -i -t -S -u -c -r -R -1 -C -x -m -f -F -p -Q -G -g -o -n -U -L --color[=WHEN] --time-style=STYLE --group-directories-first`；隐藏=点开头或 NTFS 隐藏属性，`-i` 显示真实 NTFS 文件 ID，彩色目录/可执行文件（见「ls 说明」） |
 | `grep` | `-E -F -G -i -v -w -x -c -l -L -n -H -h -o -q -s -a -r -R -m -A -B -C -e -f --include --exclude --exclude-dir --color[=WHEN]`；退出码 0/1/2 同 GNU |
 | `cat` | `-n -b -s -E -T -v -A -e -t` |
 | `cd` | 跨盘切换目录（见下方「cd 与跨盘切换」）；支持 `cd -`、`cd /`、`cd ~`、正反斜杠混用 |
@@ -201,6 +202,30 @@ Windows 没有 Linux 的 UID/GID 与 POSIX 权限位，`useradd` 等命令按 Wi
 - 默认只显示当前用户的进程（与 Linux 一致），`ps aux`/`ps -ef` 显示全部；
 - `%CPU` 按进程 CPU 时间与系统物理内存计算，与 Windows 任务管理器的近似一致。
 
+## ls 说明
+
+`ls` 忠实实现了 GNU ls 的常用参数（`-a -A -l -h -s -i -t -S -r -R -d -f -1 -C -x -m
+-F -p -Q -u -c -n -o -g -G -U -L --color --time-style --group-directories-first`），
+并按照本项目「诚实映射」的原则落地 Windows 语义：
+
+- **隐藏判定**：点开头（`.git`）**或** NTFS 隐藏属性都算隐藏，`-a` 全部显示
+  （含 `.`/`..`），`-A` 显示隐藏但不含 `.`/`..`。
+- **长格式权限列**：目录 `drwxr-xr-x`，普通文件 `-rw-r--r--`，可执行扩展名
+  （`.exe/.cmd/.bat/.com/.msi`）显示 `-rwxr-xr-x`；勾选了「只读」属性则清掉
+  `w` 位（`-r--r--r--`）。Windows 没有属主组，属主列显示当前用户短名，
+  组列显示 `None`，`-n` 显示合成的 `1000 1000`。
+- **`-i` 显示真实 NTFS 文件 ID**（`GetFileInformationByHandle` 的卷内文件索引，
+  即 Windows 的 inode），读不到时退化为路径哈希。
+- **时间**：默认按 GNU 规则（半年内显示 `Jan 2 03:04`，更早显示年份）；
+  `-u/-c` 显示/按访问时间、创建时间排序；`--time-style=long-iso|full-iso|iso|+FORMAT`。
+- **彩色**：`--color=auto`（默认，仅终端着色）目录加粗蓝色、可执行文件绿色、
+  符号链接青色；`--color=always|never` 强制/关闭。
+- **布局**：输出到管道时每行一个（与 POSIX 一致），终端时自动多列竖排，
+  `-1` 强制单列，`-C` 强制多列，`-x` 横排，`-m` 逗号分隔。
+- 排序默认按名称（大小写不敏感），`-t` 时间新→旧、`-S` 大小大→小、`-r` 反转、
+  `-f`/`-U` 不排序按目录顺序；`-R` 递归并打印 `目录名:` 标题。
+- 默认输出 `total N` 汇总行（512 字节块）；操作数不存在时报错并退出 2（同 GNU）。
+
 ## 网络命令（只读策略）
 
 网络命令分两类：**只读查询**（`netstat`、`ss`、`ip a/link/route/neigh show`、
@@ -257,6 +282,7 @@ winux/
 │  ├─ flags.go       GNU getopt 风格参数解析（-rf、-n5、--opt=val、--）
 │  ├─ util.go        通配符/~/日期/列表/转义等公共工具
 │  ├─ fs.go          cp rm mv mkdir touch ln
+│  ├─ ls.go          ls（+ ls_windows.go：隐藏/只读属性、文件 ID、访问/创建时间）
 │  ├─ text.go        cat head tail wc sort uniq cut tr
 │  ├─ grep.go        grep（递归/上下文/颜色/退出码）
 │  ├─ page.go        more / less 分页器（VT 终端，非控制台自动降级）
