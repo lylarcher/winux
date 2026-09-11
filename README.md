@@ -191,6 +191,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `su` | `-c -l -s`；root/administrator → UAC 管理员 shell；其它用户 → `runas.exe` |
 | `useradd` | `-m -d -c -p -g -G -s -u -r -e --dry-run`；映射为 `net user` + 可选的 `net localgroup`（见下「账户与权限」） |
 | `userdel` | `-r -f --dry-run`；映射为 `net user NAME /delete` |
+| `passwd` | `-S`；无参数改当前用户密码（旧密码校验，无需提权），`passwd USER` 改本地账户密码（UAC）；**微软账号/域账号拒绝** |
 | `usermod` | `-l -d -a -g -G -L -U -c -p -s -u --dry-run`；改名用 `Rename-LocalUser`，锁定/解锁用 `net user /active:no\|yes` |
 | `groupadd` | `-g -r --dry-run`；映射为 `net localgroup NAME /add` |
 | `groupdel` | `-f --dry-run`；映射为 `net localgroup NAME /delete` |
@@ -332,6 +333,17 @@ Windows 没有 Linux 的 UID/GID 与 POSIX 权限位，`useradd` 等命令按 Wi
   `chmod 444` → 只读，`chmod 644` 及更高 → 可写。执行位没有对应物，不做伪造。
 - `chown [属主[:组]]` 映射到 `icacls /setowner`；属主/组名会先用
   `net user` / `net localgroup` 校验，不存在则报错。
+- `passwd` 修改**本地用户**密码（只支持本地账户）：
+  - 不带参数：改当前用户自己的密码。先校验旧密码（`NetUserChangePassword`
+    原生 API，**无需提权**），新密码提示两次、输入不回显；符合本地密码策略
+    才算成功。
+  - `passwd USER`：改指定本地账户的密码，走 **UAC 提权**执行 `net user`。
+  - `passwd -S [USER]`：GNU 形态状态行（`lyl P 10/29/2025 0 99999 7 -1`，
+    L=禁用/P=可用/NP=无密码）+ 账户来源。
+  - **微软账号（Microsoft account）与域账号一律拒绝**：`passwd 97953` 会提示
+    该账号密码在线上管理（account.microsoft.com），不会去动本地 SAM 里的
+    占位项；域账号提示「不是本地账户」。判断依据是 `Get-LocalUser` 的
+    `PrincipalSource`。
 
 ## 进程查询（ps）
 
@@ -510,7 +522,7 @@ winux/
 │  ├─ page.go        more / less 分页器（VT 终端，非控制台自动降级）
 │  ├─ vi.go          vi/vim 编辑器
 │  ├─ sys.go         echo pwd clear date uname hostname which id whoami sudo su
-│  ├─ account.go     useradd userdel usermod groupadd groupdel chmod chown chgrp
+│  ├─ account.go     useradd userdel usermod groupadd groupdel chmod chown chgrp passwd
 │  ├─ cal.go         cal 日历
 │  ├─ proc.go        ps（+ proc_windows.go 的 WMI 快照与属主解析）
 │  ├─ netstat.go     netstat / ss（+ net_windows.go 的 iphlpapi 表读取）

@@ -691,15 +691,15 @@ func cmdSudo(args []string) int {
 	}
 	if len(f.Positional) == 0 || f.Has("login") || f.Has("shell") {
 		fmt.Fprintln(os.Stderr, "sudo: opening an elevated shell (UAC consent required)")
-		return elevateAndWait(nil, true)
+		return elevateAndWait("sudo", nil, true)
 	}
-	return elevateAndWait(f.Positional, false)
+	return elevateAndWait("sudo", f.Positional, false)
 }
 
 // elevateAndWait re-runs the given winux command line (or cmd.exe) through
 // PowerShell's Start-Process -Verb RunAs, which triggers the UAC prompt, and
 // waits for the elevated process to finish.
-func elevateAndWait(args []string, shell bool) int {
+func elevateAndWait(label string, args []string, shell bool) int {
 	file := os.Getenv("COMSPEC")
 	if file == "" {
 		file = "cmd.exe"
@@ -708,7 +708,7 @@ func elevateAndWait(args []string, shell bool) int {
 	if !shell {
 		self, err := os.Executable()
 		if err != nil {
-			warn("sudo", "cannot locate the running executable: %v", err)
+			warn(label, "cannot locate the running executable: %v", err)
 			return 1
 		}
 		file, argList = self, args
@@ -717,7 +717,7 @@ func elevateAndWait(args []string, shell bool) int {
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", ps)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		warn("sudo", "elevation failed: %v (was the UAC prompt declined?)", err)
+		warn(label, "elevation failed: %v (was the UAC prompt declined?)", err)
 		return 1
 	}
 	if cmd.ProcessState != nil {
@@ -770,7 +770,7 @@ func cmdSu(args []string) int {
 	}
 	if len(op) == 0 || login || strings.EqualFold(op[0], "root") || strings.EqualFold(op[0], "administrator") {
 		fmt.Fprintln(os.Stderr, "su: Windows has no root account; opening an elevated Administrator shell (UAC consent required)")
-		return elevateAndWait(nil, true)
+		return elevateAndWait("su", nil, true)
 	}
 	username := op[0]
 	rest := op[1:]

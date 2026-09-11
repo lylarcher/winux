@@ -3,6 +3,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,8 @@ var (
 	procGetSecurityDescriptorOwner = advapi32.NewProc("GetSecurityDescriptorOwner")
 	procLookupAccountSid         = advapi32.NewProc("LookupAccountSidW")
 	procLookupAccountName        = advapi32.NewProc("LookupAccountNameW")
+	netapi32                     = syscall.NewLazyDLL("netapi32.dll")
+	procNetUserChangePassword    = netapi32.NewProc("NetUserChangePassword")
 )
 
 const (
@@ -190,4 +193,88 @@ func sidAccountName(sid uintptr) (string, error) {
 		return shortUserName(d + `\` + n), nil
 	}
 	return n, nil
+}
+
+// passwdChangeSelf changes the CURRENT user's password through the
+// NetUserChangePassword API. This needs no elevation: the caller proves the old
+// password and the SAM applies the local password policy. The returned error is
+// already a user-facing message.
+func passwdChangeSelf(oldPass, newPass string) error {
+	username, _ := syscall.UTF16PtrFromString(shortUserName(currentUserName()))
+	oldp, _ := syscall.UTF16PtrFromString(oldPass)
+	newp, _ := syscall.UTF16PtrFromString(newPass)
+	r, _, _ := procNetUserChangePassword.Call(
+		0, uintptr(unsafe.Pointer(username)), uintptr(unsafe.Pointer(oldp)), uintptr(unsafe.Pointer(newp)))
+	switch uint32(r) {
+	case 0:
+		return nil
+	case 86: // ERROR_INVALID_PASSWORD
+		return fmt.Errorf("the current password is incorrect")
+	case 1909: // ERROR_ACCOUNT_DISABLED
+		return fmt.Errorf("the account is disabled or locked")
+	case 2221: // NERR_UserNotFound
+		return fmt.Errorf("no such user")
+	case 2245: // NERR_PasswordTooShort
+		return fmt.Errorf("the new password is too short")
+	case 2246: // NERR_PasswordTooLong
+		return fmt.Errorf("the new password is too long")
+	case 2247: // NERR_PasswordNotComplexEnough
+		return fmt.Errorf("the new password does not meet the complexity requirements")
+	case 2248: // NERR_PasswordFilterError
+		return fmt.Errorf("the password was rejected by the password filter")
+	case 2249: // NERR_PasswordNotUnique / policy
+		return fmt.Errorf("the password does not meet the password policy (check length, complexity and history)")
+	default:
+		return fmt.Errorf("the password could not be changed (NetUserChangePassword error %d)", uint32(r))
+	}
+}
+
+// localUserInfo reads a local user's facts through Get-LocalUser, whose
+// PrincipalSource tells a local account from a Microsoft/domain account.
+// errUserNotFound is returned when the account does not exist; any other
+// failure (module unavailable, policy, ...) comes back as a descriptive error.
+func localUserInfo(name string) (*localUserStatus, error) {
+	ps := systemExe("WindowsPowerShell\\v1.0\\powershell.exe")
+	esc := strings.ReplaceAll(name, "'", "''")
+	body := fmt.Sprintf(
+		"$ErrorActionPreference='Stop'\n"+
+			"$u = Get-LocalUser -Name '%s'\n"+
+			"'source=' + $u.PrincipalSource\n"+
+			"'enabled=' + $u.Enabled\n"+
+			"'passwordrequired=' + $u.PasswordRequired\n"+
+			"'passwordlastset=' + $(if ($u.PasswordLastSet) { $u.PasswordLastSet.ToString('MM/dd/yyyy') } else { 'never' })\n"+
+			"'passwordexpires=' + $(if ($u.PasswordExpires) { $u.PasswordExpires.ToString('MM/dd/yyyy') } else { 'never' })\n",
+		esc)
+	f, err := os.CreateTemp("", "winux-passwd-*.ps1")
+	if err != nil {
+		return nil, err
+	}
+	path := f.Name()
+	f.WriteString(body)
+	f.Close()
+	defer os.Remove(path)
+	out, err := queryNative(ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path)
+	if err != nil {
+		if strings.Contains(strings.ToLower(out), "was not found") || strings.Contains(strings.ToLower(out), "not found") {
+			return nil, errUserNotFound
+		}
+		return nil, fmt.Errorf("cannot query the local account database: %v", err)
+	}
+	vals := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.IndexByte(line, '='); i > 0 {
+			vals[line[:i]] = line[i+1:]
+		}
+	}
+	if _, ok := vals["source"]; !ok {
+		return nil, fmt.Errorf("Get-LocalUser returned no data for '%s'", name)
+	}
+	return &localUserStatus{
+		Source:           vals["source"],
+		Enabled:          strings.EqualFold(vals["enabled"], "true"),
+		PasswordRequired: strings.EqualFold(vals["passwordrequired"], "true"),
+		PasswordLastSet:  vals["passwordlastset"],
+		PasswordExpires:  vals["passwordexpires"],
+	}, nil
 }

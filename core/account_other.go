@@ -26,6 +26,14 @@ func fileOwner(path string) (string, error) {
 // the current user and reports explicit USER operands as unknown there.
 func accountLookup(name string) (uint32, string, bool) { return 0, name, false }
 
+// passwdChangeSelf and localUserInfo are Windows-only; off Windows the account
+// commands are unusable anyway.
+func passwdChangeSelf(oldPass, newPass string) error { return &unsupportedError{"password change"} }
+
+func localUserInfo(name string) (*localUserStatus, error) {
+	return nil, &unsupportedError{"local user lookup"}
+}
+
 type unsupportedError struct{ tool string }
 
 func (e *unsupportedError) Error() string { return e.tool + " is not available on this platform" }

@@ -3,6 +3,14 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · 新增 `passwd` 命令（仅本地用户）**：无参数 = 改当前用户密码
+  （`NetUserChangePassword` API，旧密码校验 + 新密码两次隐藏输入，无需提权）；
+  `passwd USER` = 改指定本地账户密码（UAC 提权跑 `net user`，输出经临时文件
+  回传）；`-S` = GNU 形态状态行（L/P/NP + 最近修改/过期天数近似）+ 账户来源。
+  **微软账号与域账号一律拒绝**（按 `Get-LocalUser` 的 `PrincipalSource`
+  判定）：`passwd 97953` 提示密码在线上管理，不碰本地 SAM 占位项。密码输入
+  用 SetConsoleMode 关回显（readPassword），非控制台时诚实拒绝。smoke 新增
+  4 项断言（含 MSA 条件拒绝），README 命令表与「账户与权限」同步。
 - **2026-09-11 · 修复 `id USER` 忽略用户名参数**：此前 `id test`/`id hello` 等
   一律打印当前用户身份（[USER] 位置参数被完全无视）。现在 `id USER` 用
   `LookupAccountNameW` 把账号名解析成 SID 并取末段 **RID** 当 uid/gid（本地

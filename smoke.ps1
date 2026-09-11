@@ -170,6 +170,23 @@ try {
     $stderrOut = (& cmd /c "`"${shims}\id.cmd`" no-such-user-xyz 2>&1" | Out-String)
     Check 'id USER reports no such user on stderr' `
         ($stderrOut -match "no such user") (Text $stderrOut)
+
+    # --------------------------------------------------------------- passwd --
+    $passOut = Text (& $winux passwd -S $me)
+    Check 'passwd -S prints a GNU-shaped status line' `
+        ($passOut -match ("^" + [regex]::Escape($me) + " [LNP] \d\d/\d\d/\d\d\d\d 0 ")) $passOut
+    Check 'passwd -S shows the account source' ($passOut -match 'source: ') $passOut
+    $code = Invoke-CmdLine "`"${shims}\passwd.cmd`" -S no-such-user-xyz >nul 2>&1"
+    Check 'passwd -S exits 1 for an unknown user' ($code -eq 1) "exit=$code"
+    # changing a Microsoft account's password must be refused (best effort:
+    # only when the machine has one)
+    $msa = (Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.PrincipalSource -eq 'MicrosoftAccount' } | Select-Object -First 1).Name
+    if ($msa) {
+        $msaOut = (& cmd /c "`"${shims}\passwd.cmd`" `"$msa`" <nul 2>&1" | Out-String)
+        $code = $LASTEXITCODE
+        Check 'passwd refuses a Microsoft account' `
+            (($code -eq 1) -and ($msaOut -match 'Microsoft account')) (Text $msaOut)
+    }
     Check 'whoami prints a user name' ((Text (whoami)).Length -gt 0)
     Check 'hostname prints something' ((Text (hostname)).Length -gt 0)
     Check 'ln -s / ln create links' ((Text (& $winux ln -v src/a.txt hardlink.txt)) -match 'hardlink' -or (Test-Path hardlink.txt))
@@ -183,7 +200,7 @@ try {
     $help = Text (& $winux --help)
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
-            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps', 'ls', 'du',
+            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
             'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')

@@ -22,3 +22,6 @@ func osVersion() string { return "unknown" }
 func processAlive(pid int) bool { return true }
 
 func waitInput(f *os.File, ms int) bool { return false }
+
+// readPassword cannot hide input without a console; callers refuse.
+func readPassword(prompt string) (string, bool) { return "", false }

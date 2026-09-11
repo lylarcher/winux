@@ -3,8 +3,10 @@
 package core
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -169,4 +171,26 @@ func osVersion() string {
 		return "unknown"
 	}
 	return fmt.Sprintf("%d.%d.%d", vi.MajorVersion, vi.MinorVersion, vi.BuildNumber)
+}
+
+// readPassword prints prompt on stderr and reads one line from the console with
+// echo disabled (the typed characters stay hidden). hidden is false when the
+// input cannot be hidden because stdin is not a console — the caller should
+// refuse rather than echo the password.
+func readPassword(prompt string) (line string, hidden bool) {
+	in := os.Stdin
+	restore := func() {}
+	mode, ok := consoleMode(in)
+	if ok {
+		procSetConsoleMode.Call(in.Fd(), uintptr(mode &^ enableEchoInput))
+		restore = func() { procSetConsoleMode.Call(in.Fd(), uintptr(mode)) }
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(in).ReadString('\n')
+	restore()
+	fmt.Fprintln(os.Stderr)
+	if err != nil && line == "" {
+		return "", ok
+	}
+	return strings.TrimRight(line, "\r\n"), ok
 }

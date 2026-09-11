@@ -9,6 +9,7 @@ package core
 // through UAC when the current shell is not elevated.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ func init() {
 	addCmd("chmod", "change mode bits (r/w mapped to the NTFS read-only attribute)", cmdChmod)
 	addCmd("chown", "change file owner (via icacls)", cmdChown)
 	addCmd("chgrp", "change file group (unsupported on Windows; explains the alternative)", cmdChgrp)
+	addCmd("passwd", "change a local user's password", cmdPasswd)
 }
 
 // accountElevate re-runs this winux command elevated unless we already are.
@@ -35,7 +37,7 @@ func accountElevate(name string, args []string) int {
 	if isElevated() {
 		return 0
 	}
-	return elevateAndWait(append([]string{name}, args...), false)
+	return elevateAndWait(name, append([]string{name}, args...), false)
 }
 
 // netExpiry converts a user-supplied expiry date (YYYY-MM-DD, MM/DD/YYYY or
@@ -723,4 +725,195 @@ func cmdChgrp(args []string) int {
 	fmt.Fprintf(os.Stderr, "chgrp: Windows files have no group owner (ACLs grant groups access instead);\n")
 	fmt.Fprintf(os.Stderr, "       grant group rights with: icacls FILE /grant '%s:(OI)(CI)R'\n", group)
 	return 1
+}
+
+// --------------------------------------------------------------- passwd -----
+
+// localUserStatus carries the native account facts `passwd -S` reports.
+// localUserInfo (account_windows.go / account_other.go) fills it.
+type localUserStatus struct {
+	Source           string
+	Enabled          bool
+	PasswordRequired bool
+	PasswordLastSet  string // MM/DD/YYYY or "never"
+	PasswordExpires  string // MM/DD/YYYY or "never"
+}
+
+// errUserNotFound is returned by localUserInfo when the account does not exist,
+// as opposed to a database/query failure.
+var errUserNotFound = errors.New("no such user")
+
+// cmdPasswd changes a local user's password. With no operand it changes the
+// current user's password (self-service: the old password is checked through
+// the NetUserChangePassword API, no elevation needed). With a USER operand it
+// changes that account's password elevated, like `net user USER PASS`. Only
+// local accounts are supported: Microsoft accounts (PrincipalSource
+// MicrosoftAccount) and domain accounts are refused — their passwords are
+// managed online/elsewhere. -S prints a GNU-shaped status line.
+func cmdPasswd(args []string) int {
+	f := NewFlags(
+		&Flag{Name: "status", Short: 'S', Long: "status", Help: "report password status for USER (default: the current user)"},
+	)
+	if !parseOrDie("passwd", f, args) {
+		return 2
+	}
+	if handleHelpVersion("passwd", "[OPTION]... [USER]", f) {
+		return 0
+	}
+	op := f.Positional
+	if len(op) > 1 {
+		warn("passwd", "extra operand '%s'", op[1])
+		return 1
+	}
+	target := shortUserName(currentUserName())
+	if len(op) == 1 {
+		target = op[0]
+	}
+	if f.Has("status") {
+		return passwdStatus(target)
+	}
+	if len(op) == 0 {
+		return passwdSelf()
+	}
+	return passwdOther(target)
+}
+
+// passwdSelf changes the current user's password, prompting for the old and
+// the new password with console echo disabled.
+func passwdSelf() int {
+	name := shortUserName(currentUserName())
+	if info, err := localUserInfo(name); err == nil && strings.EqualFold(info.Source, "MicrosoftAccount") {
+		fmt.Fprintf(os.Stderr, "passwd: '%s' is a Microsoft account; its password is managed online and cannot be changed locally (use account.microsoft.com)\n", name)
+		return 1
+	}
+	oldPass, hidden := readPassword("Current password: ")
+	if !hidden {
+		return passwdNoConsole()
+	}
+	newPass, hidden := readPassword("New password: ")
+	if !hidden {
+		return passwdNoConsole()
+	}
+	confirm, hidden := readPassword("Retype new password: ")
+	if !hidden {
+		return passwdNoConsole()
+	}
+	if newPass != confirm {
+		fmt.Fprintln(os.Stderr, "passwd: passwords do not match")
+		return 1
+	}
+	if newPass == "" {
+		fmt.Fprintln(os.Stderr, "passwd: the password may not be empty")
+		return 1
+	}
+	if err := passwdChangeSelf(oldPass, newPass); err != nil {
+		fmt.Fprintf(os.Stderr, "passwd: %v\n", err)
+		return 1
+	}
+	fmt.Printf("passwd: password for '%s' changed successfully.\n", name)
+	return 0
+}
+
+// passwdOther changes a named account's password. The account must be a local
+// account (Microsoft/domain accounts are refused); the new password is read
+// hidden and applied elevated via `net user USER PASS`.
+func passwdOther(target string) int {
+	info, err := localUserInfo(target)
+	if err != nil {
+		if errors.Is(err, errUserNotFound) {
+			fmt.Fprintf(os.Stderr, "passwd: user '%s' does not exist\n", target)
+		} else {
+			fmt.Fprintf(os.Stderr, "passwd: %v\n", err)
+		}
+		return 1
+	}
+	switch strings.ToLower(info.Source) {
+	case "microsoftaccount":
+		fmt.Fprintf(os.Stderr, "passwd: '%s' is a Microsoft account; its password is managed online and cannot be changed locally (use account.microsoft.com)\n", target)
+		return 1
+	case "active directory", "activedirectory", "azuread", "azure ad":
+		fmt.Fprintf(os.Stderr, "passwd: '%s' is not a local account (source: %s); only local user passwords can be changed\n", target, info.Source)
+		return 1
+	}
+	newPass, hidden := readPassword("New password: ")
+	if !hidden {
+		return passwdNoConsole()
+	}
+	confirm, hidden := readPassword("Retype new password: ")
+	if !hidden {
+		return passwdNoConsole()
+	}
+	if newPass != confirm {
+		fmt.Fprintln(os.Stderr, "passwd: passwords do not match")
+		return 1
+	}
+	if newPass == "" {
+		fmt.Fprintln(os.Stderr, "passwd: the password may not be empty")
+		return 1
+	}
+	// Apply elevated: net user writes its (localized) output to a temp file the
+	// elevated cmd can reach; we surface it when the change fails.
+	tmp, err := os.CreateTemp("", "winux-passwd-*.txt")
+	if err != nil {
+		warn("passwd", "cannot create a temp file for the result: %v", err)
+		return 1
+	}
+	path := tmp.Name()
+	tmp.Close()
+	defer os.Remove(path)
+	cmdLine := fmt.Sprintf("net user %s %s > \"%s\" 2>&1", quoteCmdArg(target), quoteCmdArg(newPass), path)
+	if code := elevateAndWait("passwd", []string{"/c", cmdLine}, true); code != 0 {
+		if b, rerr := os.ReadFile(path); rerr == nil && len(b) > 0 {
+			os.Stderr.Write(b)
+			fmt.Fprintln(os.Stderr)
+		}
+		fmt.Fprintf(os.Stderr, "passwd: could not change the password for '%s' (exit code %d)\n", target, code)
+		return 1
+	}
+	fmt.Printf("passwd: password for '%s' changed successfully.\n", target)
+	return 0
+}
+
+// passwdStatus prints a GNU-shaped status line for USER plus a short native
+// summary. The days columns are approximated: min=0, max = days until expiry
+// (99999 when the password never expires), warn=7, inactive=-1.
+func passwdStatus(target string) int {
+	info, err := localUserInfo(target)
+	if err != nil {
+		if errors.Is(err, errUserNotFound) {
+			fmt.Fprintf(os.Stderr, "passwd: user '%s' does not exist\n", target)
+		} else {
+			fmt.Fprintf(os.Stderr, "passwd: %v\n", err)
+		}
+		return 1
+	}
+	state := "P"
+	switch {
+	case !info.Enabled:
+		state = "L"
+	case info.PasswordLastSet == "never":
+		state = "NP"
+	}
+	maxDays := "99999"
+	if ls, err1 := time.Parse("01/02/2006", info.PasswordLastSet); err1 == nil {
+		if ex, err2 := time.Parse("01/02/2006", info.PasswordExpires); err2 == nil && ex.After(ls) {
+			maxDays = strconv.Itoa(int(ex.Sub(ls).Hours() / 24))
+		}
+	}
+	fmt.Printf("%s %s %s 0 %s 7 -1\n", target, state, info.PasswordLastSet, maxDays)
+	fmt.Printf("password required: %v; account enabled: %v; source: %s\n",
+		info.PasswordRequired, info.Enabled, info.Source)
+	return 0
+}
+
+// passwdNoConsole reports the honest failure when stdin is not a console and
+// the password cannot be typed hidden.
+func passwdNoConsole() int {
+	fmt.Fprintln(os.Stderr, "passwd: cannot read a password securely (stdin is not a console); run passwd from a console")
+	return 1
+}
+
+// quoteCmdArg wraps one argument for a cmd.exe command line.
+func quoteCmdArg(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
