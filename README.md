@@ -3,8 +3,8 @@
 在 PowerShell 和 cmd.exe 里直接使用 `cp`、`rm`、`mv`、`mkdir`、`touch`、`grep`、
 `ls`、`cat`、`more`、`less`、`tail`、`vi/vim`、`sudo`、`su`、`ps`、`netstat`、
 `ss`、`ip`、`nmcli` 等常见 Linux 命令，保持 Linux 的命令习惯与参数选项
-（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **47 个命令**
-（48 个命令名，`vim` 是 `vi` 的别名）。
+（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **48 个命令**
+（49 个命令名，`vim` 是 `vi` 的别名）。
 
 - **纯 Go 原生实现**，编译为单个自包含的 `winux.exe`（约 3.7 MB），零外部依赖、
   零运行时（不需要 Python/WSL/MSYS2/Cygwin）。
@@ -38,7 +38,7 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 | `mv` | `-f -i -n -u -v -t`；跨盘自动退化为「递归复制+删除」 |
 | `mkdir` | `-p -m -v`；`mkdir -p a/b/c` |
 | `touch` | `-c -a -m -d -r -t`；`touch -t 202401020304.05 f`、`touch -d "2024-01-02 03:04:05" f` |
-| `ln` | `-s -f -v`；符号链接需要开发者模式或管理员权限（否则给出提示），硬链接 `ln -v` 无需权限 |
+| `ln` | `-s -f -v -t -i -n -b[=METHOD] -r -T -L -P`；`-d` 拒绝（Windows 不支持目录硬链接）；符号链接需要开发者模式或管理员权限（否则给出提示） |
 | `ls` | `-a -A -d -l -h -s -i -t -S -u -c -r -R -1 -C -x -m -f -F -p -Q -G -g -o -n -U -L --color[=WHEN] --time-style=STYLE --group-directories-first`；隐藏=点开头或 NTFS 隐藏属性，`-i` 显示真实 NTFS 文件 ID，彩色目录/可执行文件（见「ls 说明」） |
 | `grep` | `-E -F -G -i -v -w -x -c -l -L -n -H -h -o -q -s -a -r -R -m -A -B -C -e -f --include --exclude --exclude-dir --color[=WHEN]`；退出码 0/1/2 同 GNU |
 | `cat` | `-n -b -s -E -T -v -A -e -t` |
@@ -57,6 +57,7 @@ cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/ec
 | `pwd` | `-P -L` |
 | `clear` | 清屏（VT 转义） |
 | `date` | `-u -d -r -R -I -s +FORMAT`；`date +%F`、`date -d "yesterday"`；离线可用（内置时区数据） |
+| `du` | `-a -s -h -k -m -b -B SIZE -c -d N -x -L -H -P -0 -S -l -t SIZE --apparent-size --exclude PATTERN`；默认按磁盘占用（NTFS 实际分配大小）打印、1024 字节块，见「du 说明」 |
 | `uname` | `-a -s -n -r -v -m -p -o`；如 `uname -a` → `Windows <主机名> 10.0.22631 x86_64 winux` |
 | `hostname` | `-s -d -f -i`；设置主机名会拒绝（需要管理员，且 winux 不做） |
 | `which` | `-a`；按 PATH+PATHEXT 查找，找不到退出码 1（同 GNU） |
@@ -230,6 +231,27 @@ Windows 没有 Linux 的 UID/GID 与 POSIX 权限位，`useradd` 等命令按 Wi
   `-f`/`-U` 不排序按目录顺序；`-R` 递归并打印 `目录名:` 标题。
 - 默认输出 `total N` 汇总行（512 字节块）；操作数不存在时报错并退出 2（同 GNU）。
 
+## du 说明
+
+`du` 统计磁盘占用，忠实实现 GNU 常用参数
+（`-a -s -h -k -m -b -B -c -d -x -L -H -P -0 -S -l -t --apparent-size
+--exclude`），Windows 语义诚实映射如下：
+
+- **默认统计磁盘实际占用**：文件用 `GetFileInformationByHandleEx`（FileStandardInfo）
+  读取 NTFS 真实分配字节数（目录同样有分配量），而不是逻辑大小；读取失败时回退
+  逻辑大小。`-b`/`--apparent-size` 切换为逻辑字节。
+- **单位**：默认 1024 字节块（与 GNU coreutils 一致），`-k`/`-m`/`-B SIZE` 换单位，
+  `-h` 人类可读（1K/234M/2G）。`-t SIZE` 按同一套 SIZE 解析（如 `-t 1M`）。
+- **汇总与深度**：`-s`=只输出每个操作数总计；`-d N` 限制打印深度（仍全量累加）；
+  `-a` 连同文件一起列出；`-c` 追加 grand total；`-S` 目录只算自身、不含子目录。
+- **去重与软链**：默认硬链接文件**只计一次**（按 NTFS 文件 ID 去重），`-l` 全部计；
+  默认不跟随符号链接，`-L` 全部跟随（带环路保护）、`-H` 只跟随命令行参数，
+  `-P` 不跟随。
+- **范围**：`--exclude PATTERN` 按名字通配排除；`-x` 不跨卷（按盘符/UNC 判断）；
+  `-0` 用 NUL 分隔输出行。
+- 布局为 GNU 风格 `块数\t路径`，目录总计时每行输出、最后是根目录自身；操作数
+  不存在时报错并退出 1。
+
 ## 网络命令（只读策略）
 
 网络命令分两类：**只读查询**（`netstat`、`ss`、`ip a/link/route/neigh show`、
@@ -265,10 +287,10 @@ go test ./...
 # 一键构建 + 垫片 + 激活脚本
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，129 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，141 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
-# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，共 142 项断言）
+# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，共 154 项断言）
 # ——需要你确认只读后使用
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 ```
@@ -288,6 +310,7 @@ winux/
 │  ├─ util.go        通配符/~/日期/列表/转义等公共工具
 │  ├─ fs.go          cp rm mv mkdir touch ln
 │  ├─ ls.go          ls（+ ls_windows.go：隐藏/只读属性、文件 ID、访问/创建时间）
+│  ├─ du.go          du（+ du_windows.go：NTFS 实际分配大小、卷判断）
 │  ├─ text.go        cat head tail wc sort uniq cut tr
 │  ├─ grep.go        grep（递归/上下文/颜色/退出码）
 │  ├─ page.go        more / less 分页器（VT 终端，非控制台自动降级）
@@ -310,6 +333,11 @@ winux/
 ```
 
 ## 更新记录
+
+- **2026-09-11 · 新增 `du` 与完整 `ln`**：`du` 支持 `-a -s -h -k -m -b -B -c -d -x
+  -L -H -l -S -t -0 --apparent-size --exclude`，NTFS 实际分配大小统计；`ln` 补齐
+  `-t -i -n -b[=METHOD] -r -T -L -P`（备份/相对链接/目标目录/交互提示），`-d`
+  明确拒绝。
 
 - **2026-09-11 · 新增 `ls`**：GNU 风格列表（`-a -A -l -h -s -i -t -S -u -c -r -R -F
   -m --color --time-style` 等，详见「ls 说明」）；`-i` 显示真实 NTFS 文件 ID，

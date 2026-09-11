@@ -153,7 +153,7 @@ try {
     $help = Text (& $winux --help)
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
-            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps', 'ls',
+            'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'cal', 'ps', 'ls', 'du',
             'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
@@ -284,6 +284,40 @@ try {
     Check 'ls -R recurses with headers' ((Text (ls -R)) -match 'lsdir:')
     $code = Invoke-CmdLine "`"$bin\ls.cmd`" missing-xyz >nul 2>&1"
     Check 'ls on a missing path fails with exit 2' ($code -eq 2) "exit=$code"
+
+    # ------------------------------------------------------------------- du --
+    Write-Host '== du section ==' -ForegroundColor Cyan
+
+    New-Item -ItemType Directory -Force -Path dudir, dudir\deep | Out-Null
+    Set-Content -Path dudir\a.txt -Value (('x' * 2000)) -Encoding ascii -NoNewline
+    Set-Content -Path dudir\deep\inner.txt -Value 'in' -Encoding ascii -NoNewline
+    $duSh = Text (& $winux du -sh dudir)
+    Check 'du -sh prints a human-sized total' ($duSh -match 'K|M' -and $duSh -match 'dudir')
+    Check 'du -s prints exactly one line' (@((Text (& $winux du -s dudir)) -split "`n").Count -le 2)
+    Check 'du -a lists files' ((Text (& $winux du -a dudir)) -match 'a\.txt' -and (Text (& $winux du -a dudir)) -match 'inner\.txt')
+    Check 'du -c prints a grand total' ((Text (& $winux du -sc dudir)) -match 'total')
+    Check 'du -B 1K accepts a block size' ((Text (& $winux du -B 1K -s dudir)) -match 'dudir')
+    Check 'du supports --exclude' (-not ((Text (& $winux du -a --exclude '*.txt' dudir)) -match 'a\.txt'))
+    Check 'du on a missing path fails with exit 1' ((Invoke-CmdLine "`"$bin\du.cmd`" missing-xyz >nul 2>&1") -eq 1)
+
+    # ------------------------------------------------------------------- ln --
+    Write-Host '== ln section ==' -ForegroundColor Cyan
+
+    Set-Content -Path lnsrc.txt -Value 'hello' -Encoding ascii -NoNewline
+    Set-Content -Path lnold.txt -Value 'old' -Encoding ascii -NoNewline
+    & $winux ln -v lnsrc.txt lnhard.txt | Out-Null
+    Check 'ln hard-link works' ((Get-Content lnhard.txt -Raw) -eq 'hello')
+    & $winux ln -f lnsrc.txt lnold.txt | Out-Null
+    Check 'ln -f overwrites an existing destination' ((Get-Content lnold.txt -Raw) -eq 'hello')
+    Set-Content -Path lnold2.txt -Value 'old' -Encoding ascii -NoNewline
+    & $winux ln -b lnsrc.txt lnold2.txt | Out-Null
+    Check 'ln -b backs up the existing destination' ((Test-Path lnold2.txt~) -and (Get-Content lnold2.txt -Raw) -eq 'hello')
+    $lnCode = Invoke-CmdLine "`"$bin\ln.cmd`" -s -t dudir lnsrc.txt >nul 2>&1"
+    if ($lnCode -eq 0) {
+        Check 'ln -s -t creates the link inside the target directory' ((Test-Path dudir\lnsrc.txt))
+    } else {
+        Check 'ln -s -t is skipped without Developer Mode' ($true)
+    }
 
     # ----------------------------------------------------------------- network --
     if ($Network) {

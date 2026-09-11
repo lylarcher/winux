@@ -27,7 +27,7 @@ $bin = Join-Path $root 'bin'
 $null = New-Item -ItemType Directory -Force -Path $bin
 
 $commands = @(
-    'cal', 'cat', 'cd', 'chgrp', 'chmod', 'chown', 'clear', 'cp', 'cut', 'date', 'echo',
+    'cal', 'cat', 'cd', 'chgrp', 'chmod', 'chown', 'clear', 'cp', 'cut', 'date', 'du', 'echo',
     'grep', 'groupadd', 'groupdel', 'head', 'hostname', 'id', 'ip', 'ipconfig', 'less', 'ln',
     'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sort', 'ss',
     'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'useradd', 'userdel', 'usermod',

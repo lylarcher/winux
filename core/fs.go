@@ -662,52 +662,135 @@ func cmdLn(args []string) int {
 		&Flag{Name: "symbolic", Short: 's', Long: "symbolic", Help: "make symbolic links instead of hard links"},
 		&Flag{Name: "force", Short: 'f', Long: "force", Help: "remove existing destination files"},
 		&Flag{Name: "verbose", Short: 'v', Long: "verbose", Help: "print the name of each linked file"},
+		&Flag{Name: "target-directory", Short: 't', Long: "target-directory", HasArg: true, ArgName: "DIR", Help: "specify the DIRECTORY in which to create the links"},
+		&Flag{Name: "interactive", Short: 'i', Long: "interactive", Help: "prompt whether to remove destinations"},
+		&Flag{Name: "no-dereference", Short: 'n', Long: "no-dereference", Help: "treat LINK_NAME that is a symlink to a directory as a file"},
+		&Flag{Name: "backup", Short: 'b', Long: "backup", OptArg: true, ArgName: "[=METHOD]", Help: "back up each existing destination file; METHOD: none, numbered, existing, simple"},
+		&Flag{Name: "relative", Short: 'r', Long: "relative", Help: "create symbolic links relative to link location"},
+		&Flag{Name: "no-target-directory", Short: 'T', Long: "no-target-directory", Help: "treat LINK_NAME as a normal file always"},
+		&Flag{Name: "logical", Short: 'L', Long: "logical", Help: "dereference TARGETs that are symbolic links"},
+		&Flag{Name: "physical", Short: 'P', Long: "physical", Help: "make hard links directly to symbolic links (default)"},
+		&Flag{Name: "directory", Short: 'd', Long: "directory", Help: "allow the superuser to attempt to hard link directories (refused on Windows)"},
 	)
 	if !parseOrDie("ln", f, args) {
 		return 2
 	}
-	if handleHelpVersion("ln", "[OPTION]... TARGET... [LINK_NAME|DIRECTORY]", f) {
+	if handleHelpVersion("ln", "[OPTION]... [-T] TARGET LINK_NAME\n  or:  ln [OPTION]... TARGET\n  or:  ln [OPTION]... TARGET... DIRECTORY\n  or:  ln [OPTION]... -t DIRECTORY TARGET...", f) {
 		return 0
 	}
+	if f.Has("directory") {
+		warn("ln", "Windows does not allow hard links to directories")
+		return 1
+	}
 	op := expandGlobs(f.Positional)
-	if len(op) < 2 {
+	sources, dest, ok := resolveSources("ln", f, op)
+	if !ok {
+		return 1
+	}
+	if len(sources) == 0 {
 		warn("ln", "missing file operand")
 		return 1
 	}
-	target := op[0]
-	links := op[1:]
-	if len(links) > 1 && !isDir(links[len(links)-1]) {
-		warn("ln", "target '%s' is not a directory", links[len(links)-1])
+	if f.Has("no-target-directory") && len(sources) > 1 {
+		warn("ln", "extra operand '%s'", sources[1])
 		return 1
 	}
+	// When -t is given, dest is always the directory.
+	// Otherwise dest may be a regular file (single source) or a directory
+	// (multi-source requires a directory, like GNU).
+	isDirDest := f.Has("target-directory") || isDir(dest)
+	if len(sources) > 1 && !isDirDest {
+		warn("ln", "target '%s' is not a directory", dest)
+		return 1
+	}
+	if f.Has("no-target-directory") {
+		isDirDest = false
+	}
+
 	exit := 0
-	for _, link := range links {
-		linkPath := link
-		if isDir(linkPath) {
-			linkPath = filepath.Join(linkPath, filepath.Base(target))
+	for _, target := range sources {
+		base := filepath.Base(target)
+		linkPath := dest
+		if isDirDest {
+			linkPath = filepath.Join(dest, base)
 		}
+
+		// -n: if linkPath is a symlink pointing to a directory, treat it as a file
+		if f.Has("no-dereference") {
+			if fi, err := os.Lstat(linkPath); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				linkPath = dest
+			}
+		}
+
 		if fileExists(linkPath) {
-			if f.Has("force") {
+			if fi, err := os.Lstat(linkPath); err == nil && fi.IsDir() && !isSymlinkMode(fi.Mode()) && !f.Has("force") {
+				warn("ln", "cannot create link '%s': Is a directory", linkPath)
+				exit = 1
+				continue
+			}
+			doBackup := f.Has("backup")
+			doForce := f.Has("force")
+			if f.Has("interactive") {
+				if !askYesNo(fmt.Sprintf("ln: replace '%s'? ", linkPath)) {
+					continue
+				}
+				doForce = true
+			}
+			if doBackup {
+				method := strings.ToLower(f.Str("backup"))
+				if method == "none" || method == "off" {
+					doBackup = false
+				} else {
+					if method == "" {
+						method = "simple"
+					}
+					bak := backupName(linkPath, method)
+					if err := os.Rename(linkPath, bak); err != nil {
+						warn("ln", "cannot back up '%s' to '%s': %v", linkPath, bak, err)
+						exit = 1
+						continue
+					}
+					doForce = false
+				}
+			}
+			if doForce {
 				if err := os.Remove(linkPath); err != nil {
 					warn("ln", "cannot remove '%s': %v", linkPath, err)
 					exit = 1
 					continue
 				}
-			} else {
+			} else if !doBackup {
 				warn("ln", "failed to create link '%s': File exists", linkPath)
 				exit = 1
 				continue
 			}
 		}
+
 		var err error
+		linkTarget := target
 		if f.Has("symbolic") {
-			t := target
-			if !filepath.IsAbs(t) {
-				if abs, aerr := filepath.Abs(t); aerr == nil {
-					t = abs
+			if f.Has("logical") {
+				if r, err2 := filepath.EvalSymlinks(linkTarget); err2 == nil {
+					linkTarget = r
 				}
 			}
-			err = os.Symlink(t, linkPath)
+			if f.Has("relative") {
+				absT, err2 := filepath.Abs(target)
+				if err2 == nil {
+					dirL := filepath.Dir(linkPath)
+					absL, _ := filepath.Abs(dirL)
+					if rel, err3 := filepath.Rel(absL, absT); err3 == nil {
+						linkTarget = rel
+					}
+				}
+			} else {
+				if !filepath.IsAbs(linkTarget) {
+					if abs, err2 := filepath.Abs(linkTarget); err2 == nil {
+						linkTarget = abs
+					}
+				}
+			}
+			err = os.Symlink(linkTarget, linkPath)
 			if err != nil {
 				warn("ln", "%v", symlinkError(linkPath, err))
 				exit = 1
@@ -725,6 +808,41 @@ func cmdLn(args []string) int {
 		}
 	}
 	return exit
+}
+
+// backupName returns the backup file name for path per GNU backup METHOD.
+func backupName(path, method string) string {
+	switch method {
+	case "numbered", "t":
+		for i := int64(1); i < 99999; i++ {
+			cand := fmt.Sprintf("%s.~%d~", path, i)
+			if !fileExists(cand) {
+				return cand
+			}
+		}
+		return path + ".~1~"
+	case "existing", "nil":
+		if cand := lastNumbered(path); cand != "" {
+			return cand
+		}
+		return path + "~"
+	default: // "simple", "never", ""
+		return path + "~"
+	}
+}
+
+func lastNumbered(path string) string {
+	for i := int64(1); i < 99999; i++ {
+		if fileExists(fmt.Sprintf("%s.~%d~", path, i)) {
+			for j := i; j < 99999; j++ {
+				if !fileExists(fmt.Sprintf("%s.~%d~", path, j)) {
+					return fmt.Sprintf("%s.~%d~", path, j)
+				}
+			}
+			return fmt.Sprintf("%s.~1~", path)
+		}
+	}
+	return ""
 }
 
 // -------------------------------------------------------------- helpers ----
