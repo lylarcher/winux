@@ -1,10 +1,12 @@
 # winux — Linux 风格命令行工具（原生 Windows 适配）
 
 在 PowerShell 和 cmd.exe 里直接使用 `cp`、`rm`、`mv`、`mkdir`、`touch`、`grep`、
-`cat`、`more`、`less`、`tail`、`vi/vim`、`sudo`、`su` 等常见 Linux 命令，保持
-Linux 的命令习惯与参数选项（`cp -r`、`rm -rf`、`grep -rin`、`sort -nr`……）。
+`ls`、`cat`、`more`、`less`、`tail`、`vi/vim`、`sudo`、`su`、`ps`、`netstat`、
+`ss`、`ip`、`nmcli` 等常见 Linux 命令，保持 Linux 的命令习惯与参数选项
+（`cp -r`、`rm -rf`、`ls -l`、`grep -rin`、`sort -nr`……）。内置 **47 个命令**
+（48 个命令名，`vim` 是 `vi` 的别名）。
 
-- **纯 Go 原生实现**，编译为单个自包含的 `winux.exe`（约 3 MB），零外部依赖、
+- **纯 Go 原生实现**，编译为单个自包含的 `winux.exe`（约 3.7 MB），零外部依赖、
   零运行时（不需要 Python/WSL/MSYS2/Cygwin）。
 - 同一个二进制内置全部命令（busybox 风格多合一），同时支持
   `winux <命令> ...` 和按 argv[0] 派发（把 exe 改名/硬链接成 `cp.exe` 即可当 `cp` 用）。
@@ -110,10 +112,12 @@ Windows 同时接受 `\` 和 `/`，winux 的所有命令都遵循这一习惯，
 
 ## PowerShell 说明
 
-- `activate.ps1` **只删除我们有替代品的别名/函数**（按 `bin\*.cmd` 动态计算），
-  PowerShell 自带的 `ls/dir/cls/md/type/copy/move/rd` 等原样保留。
-- `cp`、`rm`、`mv`、`cat`、`pwd`、`clear`、`echo`、`mkdir`、`sort`、`more`、
-  `which` 等会解析到 `bin` 里的垫片。
+- `activate.ps1` 会**删除与我们有替代品的同名别名/函数**（按 `bin\*.cmd` 动态计算），
+  所以激活后 `ls`、`cp`、`rm`、`mv`、`cat`、`sort`、`which` 等一律解析到 winux
+  垫片；PowerShell 自己的 `dir/cls/md/type/copy/move/rd/gc` 等因没有同名垫片而
+  原样保留。
+- `cp`、`rm`、`mv`、`ls`、`cat`、`pwd`、`clear`、`echo`、`mkdir`、`sort`、`more`、
+  `which`、`ps` 等会解析到 `bin` 里的垫片。
 - 输出编码为 UTF-8，控制台自动开启 VT（真彩/ANSI）支持，中文路径与内容正常。
 
 ## cmd.exe 说明
@@ -252,19 +256,20 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
 ## 构建与测试
 
 ```powershell
-# 单元测试（flags、glob/tilde 展开、cp/rm/mv/mkdir/touch、grep 上下文、
+# 单元测试（flags、glob/tilde 展开、cp/rm/mv/mkdir/touch/ls、grep 上下文、
 #            head/tail/wc/sort/uniq/cut/tr、pager/vi 内部逻辑、date 解析、
-#            chmod/cal、ps、netstat/ss、ip/nmcli/ipconfig —— 后两者默认跳过，
+#            chmod/cal、ps；netstat/ss、ip/nmcli/ipconfig 等网络用例默认跳过，
 #            见「网络命令（只读策略）」）
 go test ./...
 
 # 一键构建 + 垫片 + 激活脚本
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，119 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，129 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
-# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig）——需要你确认只读后使用
+# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，共 142 项断言）
+# ——需要你确认只读后使用
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 ```
 
@@ -296,11 +301,28 @@ winux/
 │  ├─ term_windows.go  控制台原始模式、按键解码、终端尺寸（Windows）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）
+├─ .gitignore       忽略构建产物（bin/、winux.exe 等）
+├─ .gitattributes   文本统一 LF、二进制不规范化
 ├─ build.ps1        构建 + 生成垫片与激活脚本
 ├─ install.ps1      持久化安装（用户 PATH + PowerShell 配置档）
 ├─ smoke.ps1        双 shell 端到端冒烟测试（-Network 额外跑只读网络段）
 └─ bin/             构建产物：winux.exe、*.cmd 垫片、activate.*
 ```
+
+## 更新记录
+
+- **2026-09-11 · 新增 `ls`**：GNU 风格列表（`-a -A -l -h -s -i -t -S -u -c -r -R -F
+  -m --color --time-style` 等，详见「ls 说明」）；`-i` 显示真实 NTFS 文件 ID，
+  隐藏判定=点开头或 NTFS 隐藏属性；权限列按「诚实映射」落地（目录/可执行/只读）。
+- **2026-09-11 · 重构为 core 包 + 新命令**：全部命令迁入 `winux/core`（可被
+  import/嵌入，`Execute`/`CommandNames` 导出），`main.go` 变为薄壳；单元测试迁至
+  `winux/test`。新增账户与权限命令（`useradd userdel usermod groupadd groupdel
+  chmod chown chgrp`，写操作 UAC 提权 + `--dry-run`）、`cal`、`ps`（WMI 快照）、
+  `netstat/ss`（iphlpapi 内核表）、`ipconfig/ip/nmcli/nmtui`（网络只读策略，
+  改网子命令一律拒绝）。
+- **v1.0.0 · 初始版本**：`cp rm mv mkdir touch ln grep cat head tail wc sort uniq
+  cut tr vi/vim more less echo pwd clear date uname hostname which id whoami sudo
+  su`，含 cd 跨盘切换、正反斜杠兼容、通配符展开、双 shell 激活脚本。
 
 ## 许可
 
