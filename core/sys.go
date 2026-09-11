@@ -85,7 +85,7 @@ func cmdCd(args []string) int {
 	// the activate.ps1 cd function (which runs with WINUX_ACTIVE set).
 	if os.Getenv("WINUX_ACTIVE") == "" {
 		fmt.Fprintln(os.Stderr, "提示: 子进程无法改变所在 shell 的工作目录, 这里只打印了目标路径。")
-		fmt.Fprintln(os.Stderr, "请先激活 winux 再直接使用 cd: PowerShell 执行 . activate.ps1, cmd 执行 call activate.cmd,")
+		fmt.Fprintln(os.Stderr, "请先激活 winux 再直接使用 cd: PowerShell 执行 winux activate | iex, cmd 执行 for /f \"delims=\" %l in ('winux activate') do @%l,")
 		fmt.Fprintln(os.Stderr, "之后 cd 命令的跨盘切换、cd -、cd ~、cd / 才会真正生效。")
 	}
 	return 0

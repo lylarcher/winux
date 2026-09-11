@@ -6,8 +6,8 @@
     Produces:
       bin\winux.exe        the single native binary that implements every command
       bin\<command>.cmd    one shim per command so that `cp -r a b` works in both shells
-      bin\activate.cmd     cmd.exe session setup (PATH + doskey macros for cmd's built-ins)
-      bin\activate.ps1     PowerShell session setup (PATH + removal of the shadowing aliases)
+      bin\winux-activate.cmd     cmd.exe session setup (PATH + doskey macros for cmd's built-ins)
+      bin\winux-activate.ps1     PowerShell session setup (PATH + removal of the shadowing aliases)
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\build.ps1
@@ -78,9 +78,11 @@ $shimDir = Join-Path $bin 'cmd'
 $null = New-Item -ItemType Directory -Force -Path $shimDir
 
 # Drop stale artifacts from previous layouts (old shims used to sit directly
-# in bin\, next to winux.exe). Keep winux.exe itself.
+# in bin\, next to winux.exe; old helpers were bare activate.ps1/deactivate.ps1
+# and are now winux- prefixed). Keep winux.exe itself.
 Get-ChildItem $bin -Filter '*.cmd' -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem $bin -Filter '*.exe' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'winux.exe' } | Remove-Item -Force
+Get-ChildItem $bin -Filter '*.ps1' -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'winux-*' } | Remove-Item -Force
 
 Write-Host 'Generating command shims ...' -ForegroundColor Cyan
 foreach ($c in $commands) {
@@ -114,7 +116,7 @@ if ($RealExes) {
 $activateCmd = @'
 @echo off
 rem Activate the winux Linux-style commands in this cmd.exe session.
-rem   call C:\path\to\winux\bin\cmd\activate.cmd
+rem   call C:\path\to\winux\bin\cmd\winux-activate.cmd
 rem   or, with winux.exe on PATH:  for /f "delims=" %l in ('winux activate') do @%l
 set "WINUX_SHIMS=%~dp0"
 for %%E in ("%~dp0..") do set "WINUX_EXE=%%~fE"
@@ -134,13 +136,13 @@ doskey date=winux.exe date $*
 echo winux activated: cp rm mv mkdir touch grep cat cd less vi and more are now available.
 echo Type "winux --help" for the full command list.
 '@
-Set-Content -Path (Join-Path $shimDir 'activate.cmd') -Value $activateCmd -Encoding ascii
+Set-Content -Path (Join-Path $shimDir 'winux-activate.cmd') -Value $activateCmd -Encoding ascii
 
 $deactivateCmd = @'
 @echo off
-rem Deactivate the winux commands in this cmd.exe session (the opposite of activate.cmd).
-rem   call C:\path\to\winux\bin\cmd\deactivate.cmd
-rem An empty doskey definition removes the macro bound by activate.cmd.
+rem Deactivate the winux commands in this cmd.exe session (the opposite of winux-activate.cmd).
+rem   call C:\path\to\winux\bin\cmd\winux-deactivate.cmd
+rem An empty doskey definition removes the macro bound by winux-activate.cmd.
 doskey cd=
 doskey mkdir=
 doskey echo=
@@ -163,11 +165,11 @@ set "WINUX_EXE="
 set "WINUX_OLD_PATH="
 echo winux deactivated: mkdir echo date cd are cmd.exe built-ins again.
 '@
-Set-Content -Path (Join-Path $shimDir 'deactivate.cmd') -Value $deactivateCmd -Encoding ascii
+Set-Content -Path (Join-Path $shimDir 'winux-deactivate.cmd') -Value $deactivateCmd -Encoding ascii
 
 $activatePs1 = @'
 # Activate the winux Linux-style commands in this PowerShell session:
-#   . C:\path\to\winux\bin\activate.ps1
+#   . C:\path\to\winux\bin\winux-activate.ps1
 #   or, with winux.exe on PATH:  winux activate | iex
 # Add the same line to $PROFILE to make it permanent.
 
@@ -188,6 +190,9 @@ $shimNames = @(Get-ChildItem -Path $winuxShims -Filter '*.cmd' |
 # cd/ls/pwd plus any user-defined ones) into a per-session file, so
 # deactivate.ps1 can restore exactly what was there. User FUNCTIONS with shim
 # names are deliberately not restored (rare; they are not covered).
+# NOTE: the helper scripts are winux- prefixed (winux-activate.ps1 etc.) so
+# adding bin\ to PATH never introduces bare `activate`/`deactivate` names that
+# could collide with other toolchains (conda, Python venv, ...).
 $env:WINUX_STATE = Join-Path $env:TEMP ("winux-state-" + $PID + ".ps1")
 $stateLines = @()
 foreach ($name in $shimNames) {
@@ -263,16 +268,17 @@ Write-Host "winux activated from $winuxBin" -ForegroundColor Green
 Write-Host 'cp rm mv mkdir touch grep cat cd less vi and more now resolve to winux.' -ForegroundColor Green
 Write-Host 'Run "winux --help" for the whole command list.' -ForegroundColor Green
 '@
-Set-Content -Path (Join-Path $bin 'activate.ps1') -Value $activatePs1 -Encoding utf8
+Set-Content -Path (Join-Path $bin 'winux-activate.ps1') -Value $activatePs1 -Encoding utf8
 
 $deactivatePs1 = @'
 # Deactivate the winux commands in this PowerShell session (the opposite of
-# activate.ps1): restore PATH and any shadowed aliases, drop the cd function
-# and clear the markers. Dot-source it:  . C:\path\to\winux\bin\deactivate.ps1
+# winux-activate.ps1): restore PATH and any shadowed aliases, drop the cd
+# function and clear the markers. Dot-source it:
+#   . C:\path\to\winux\bin\winux-deactivate.ps1
 
 $state = $env:WINUX_STATE
 if ($state -and (Test-Path -LiteralPath $state)) {
-    . $state               # restores exactly the aliases activate.ps1 removed
+    . $state               # restores exactly the aliases winux-activate.ps1 removed
     Remove-Item -LiteralPath $state -Force -ErrorAction SilentlyContinue
 }
 Remove-Item Env:WINUX_STATE -ErrorAction SilentlyContinue
@@ -296,7 +302,7 @@ Remove-Variable -Scope Global -Name winuxExe, winuxPrevDir -ErrorAction Silently
 
 Write-Host 'winux deactivated: the native PowerShell commands (ls/cat/cd/ps/...) are restored.' -ForegroundColor Yellow
 '@
-Set-Content -Path (Join-Path $bin 'deactivate.ps1') -Value $deactivatePs1 -Encoding utf8
+Set-Content -Path (Join-Path $bin 'winux-deactivate.ps1') -Value $deactivatePs1 -Encoding utf8
 
 $exeSize = (Get-Item (Join-Path $bin 'winux.exe')).Length
 Write-Host ''
@@ -305,7 +311,7 @@ Write-Host ''
 Write-Host 'Enable the commands in a shell (winux.exe on PATH):' -ForegroundColor Yellow
 Write-Host ("  cmd.exe     :  for /f `"delims=`" %l in ('winux activate') do @%l   (exit: ... 'winux deactivate' ...)" )
 Write-Host ("  PowerShell  :  winux activate | iex   (exit: winux deactivate | iex)")
-Write-Host ("  or directly:  . `"{0}\activate.ps1`"   /   call `"{0}\cmd\activate.cmd`"" -f $bin)
+Write-Host ("  or directly:  . `"{0}\winux-activate.ps1`"   /   call `"{0}\cmd\winux-activate.cmd`"" -f $bin)
 Write-Host ''
 Write-Host 'They can also be used directly without activation:' -ForegroundColor Yellow
 Write-Host ("  {0}\cmd\cp.cmd -r src dst" -f $bin)

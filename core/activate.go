@@ -13,8 +13,10 @@ package core
 //
 // The shell is detected from the parent process image name (with a
 // PSModulePath fallback); --shell overrides it. The printed line simply
-// dot-sources activate.ps1 / calls cmd\activate.cmd, keeping a single source
-// of truth for the actual activation logic.
+// dot-sources winux-activate.ps1 / calls cmd\winux-activate.cmd, keeping a
+// single source of truth for the actual activation logic. The helper files are
+// winux- prefixed on purpose: bin\ may sit on the system PATH, and a bare
+// activate.ps1/activate.cmd name there could collide with other toolchains.
 
 import (
 	"fmt"
@@ -91,11 +93,11 @@ func detectShell() string {
 }
 
 func cmdActivate(args []string) int {
-	return emitActivate(args, "activate", "activate.ps1", filepath.Join("cmd", "activate.cmd"))
+	return emitActivate(args, "activate", "winux-activate.ps1", filepath.Join("cmd", "winux-activate.cmd"))
 }
 
 func cmdDeactivate(args []string) int {
-	return emitActivate(args, "deactivate", "deactivate.ps1", filepath.Join("cmd", "deactivate.cmd"))
+	return emitActivate(args, "deactivate", "winux-deactivate.ps1", filepath.Join("cmd", "winux-deactivate.cmd"))
 }
 
 func emitActivate(args []string, name, psFile, cmdFile string) int {

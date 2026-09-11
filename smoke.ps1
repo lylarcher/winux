@@ -63,7 +63,7 @@ $env:WINUX_OLDPWD_FILE = Join-Path $work '.oldpwd'
 
 try {
     Write-Host '== PowerShell section ==' -ForegroundColor Cyan
-    . (Join-Path $bin 'activate.ps1') | Out-Null
+    . (Join-Path $bin 'winux-activate.ps1') | Out-Null
 
     Check 'cp resolves to the winux shim, not the Copy-Item alias' `
         ((Get-Command cp -ErrorAction SilentlyContinue).Source -like "$bin*") "source=$((Get-Command cp -ErrorAction SilentlyContinue).Source)"
@@ -72,11 +72,11 @@ try {
     # `winux activate` / `winux deactivate` are the from-anywhere activation
     # (winux.exe on PATH): they print the one-liner for the detected shell.
     $actLine = Text (& $winux activate)
-    Check 'winux activate prints the PowerShell activation one-liner' ($actLine -eq ". '$bin\activate.ps1'") $actLine
+    Check 'winux activate prints the PowerShell activation one-liner' ($actLine -eq ". '$bin\winux-activate.ps1'") $actLine
     $actCmdLine = Text (& $winux activate --shell cmd)
-    Check 'winux activate --shell cmd prints the batch call line' ($actCmdLine -eq "call `"$shims\activate.cmd`"") $actCmdLine
+    Check 'winux activate --shell cmd prints the batch call line' ($actCmdLine -eq "call `"$shims\winux-activate.cmd`"") $actCmdLine
     $deLine = Text (& $winux deactivate)
-    Check 'winux deactivate prints the deactivation one-liner' ($deLine -eq ". '$bin\deactivate.ps1'") $deLine
+    Check 'winux deactivate prints the deactivation one-liner' ($deLine -eq ". '$bin\winux-deactivate.ps1'") $deLine
 
     # ---------------------------------------------------------- fixtures ----
     mkdir -p src/sub | Out-Null
@@ -178,7 +178,7 @@ try {
     Check 'su explains that Windows has no root account' ((Text (& $winux su --help)) -match 'USER|USER')
 
     # ------------------------------------------------------------- cd --------
-    # `cd` is a PowerShell function (defined by activate.ps1): winux resolves
+    # `cd` is a PowerShell function (defined by winux-activate.ps1): winux resolves
     # the target and Set-Location performs the actual change.
     cd 'src'
     Check 'cd into a subdirectory' ((Get-Location).Path.EndsWith('src'))
@@ -404,7 +404,7 @@ EOF
     # ---------------------------------------------------------- deactivate --
     Write-Host '== deactivate section ==' -ForegroundColor Cyan
 
-    . (Join-Path $bin 'deactivate.ps1')
+    . (Join-Path $bin 'winux-deactivate.ps1')
     Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
     Check 'deactivate cleared the activation markers' ((($null -eq $env:WINUX_ACTIVE) -and ($null -eq $env:WINUX_STATE)) -and ($null -eq $env:WINUX_OLD_PATH))
     Check 'deactivate removed winux from PATH' (($env:Path -split ';') -notcontains $bin) (($env:Path -split ';' | Where-Object { $_ -eq $bin }) -join ',')
@@ -440,8 +440,8 @@ EOF
     # --------------------------------------------------------- cmd.exe -------
     Write-Host '== cmd.exe section ==' -ForegroundColor Cyan
 
-    $macroOut = Text (& cmd /c "call `"${shims}\activate.cmd`" >nul && doskey /macros")
-    Check 'activate.cmd registers doskey macros for cmd built-ins' `
+    $macroOut = Text (& cmd /c "call `"${shims}\winux-activate.cmd`" >nul && doskey /macros")
+    Check 'winux-activate.cmd registers doskey macros for cmd built-ins' `
         ($macroOut -match 'mkdir=winux' -and $macroOut -match 'echo=winux' -and $macroOut -match 'date=winux') $macroOut
 
     # A batch file must invoke the .cmd shims with `call` (cmd.exe does not
@@ -451,7 +451,7 @@ EOF
 set WINUX=$winux
 set SHIMS=$shims
 rem activate through `winux activate --shell cmd` (the from-anywhere form):
-rem winux prints `call "path\cmd\activate.cmd"` and the for-loop runs it
+rem winux prints `call "path\cmd\winux-activate.cmd"` and the for-loop runs it
 for /f "delims=" %%l in ('"$winux" activate --shell cmd') do %%l
 if not defined WINUX_ACTIVE (echo FAIL winux-activate & exit /b 18)
 cd /d "$work"
@@ -493,7 +493,7 @@ if not "%OLDD%"=="$work\src" (echo FAIL cd-dash & exit /b 14)
 for /f "delims=" %%d in ('"$bin\winux.exe" cd -') do cd /d %%d
 if /i not "%CD%"=="$work\src" (echo FAIL cd-dash-move & exit /b 15)
 cd /d "$work"
-call "${shims}\deactivate.cmd" >nul
+call "${shims}\winux-deactivate.cmd" >nul
 if defined WINUX_ACTIVE (echo FAIL deactivate & exit /b 16)
 doskey /macros | findstr /ic:"mkdir" >nul && (echo FAIL deactivate-macros & exit /b 17)
 echo cmdtest-ok
@@ -510,7 +510,7 @@ exit /b 0
     # the console command-line editor, which is why piped/redirected input does
     # not trigger them). Verify the exact macro definitions here.
     $macros = @{}
-    $raw = (& cmd /c "call `"${shims}\activate.cmd`" >nul && doskey /macros") | Out-String
+    $raw = (& cmd /c "call `"${shims}\winux-activate.cmd`" >nul && doskey /macros") | Out-String
     foreach ($line in ($raw -split "`r?`n")) {
         $parts = $line -split '=', 2
         if ($parts.Count -eq 2) { $macros[$parts[0].Trim()] = $parts[1].Trim() }
