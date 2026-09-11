@@ -28,6 +28,10 @@ $bin = Join-Path $root 'bin'
 if (-not (Test-Path (Join-Path $bin 'winux.exe'))) {
     throw "winux.exe not found in $bin - run build.ps1 first"
 }
+# The .cmd shims / .ps1 helpers are embedded in winux.exe; materialize them so
+# the profile hook and direct use work even if bin\ was copied elsewhere.
+& (Join-Path $bin 'winux.exe') shims | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'winux shims failed' }
 
 $profileLine = ". '$bin\winux-activate.ps1'"
 $pathEntry = $bin

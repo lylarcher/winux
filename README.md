@@ -16,7 +16,7 @@
 ## 快速开始
 
 ```powershell
-# 1) 构建（生成 bin\winux.exe + bin\cmd\ 下的 .cmd 垫片 + 激活脚本）
+# 1) 构建（winux.exe 内嵌全部 .cmd 垫片与激活脚本，构建后自动解压到 bin\cmd\）
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 # 2) 让 `winux` 全局可用：把 winux.exe 所在目录加入 PATH（推荐用 install.ps1，
@@ -39,13 +39,16 @@ for /f "delims=" %l in ('winux deactivate') do @%l      # cmd.exe
 call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 ```
 
-> **布局与命名**：`winux.exe` 与 `cmd\` 目录并排。只有 `winux.exe` 的目录需要进 PATH
-> （`winux` 到处可用）；全部 `.cmd` 垫片放在 `cmd\` 里，由激活脚本在**当前会话**
-> 前置到 PATH，因此不激活时它们不会遮蔽任何原生命令。辅助脚本一律
-> `winux-` 前缀（`winux-activate.ps1` 等），所以把 `bin\` 加进系统 PATH 后
-> 不会引入裸 `activate`/`deactivate` 名字，不会与 conda/Python venv 等其它
-> 工具的激活脚本冲突。cmd.exe 激活会顺带安装 `mkdir/echo/date` 的 doskey 宏
-> （见下文「cmd.exe 内建命令」一节）。
+> **布局与命名**：`winux.exe` 与 `cmd\` 目录并排。全部 `.cmd` 垫片与激活辅助
+> 脚本（`winux-activate.ps1`/`winux-deactivate.ps1`、`cmd\winux-*.cmd`）都
+> **内嵌在 winux.exe 里**，由 `winux activate`（或 `winux shims`）按 **md5 增量**
+> 解压到 exe 旁：文件不存在则创建，存在且 md5 相同则跳过（不重写、不动时间戳），
+> md5 不同才覆盖。因此把 winux.exe 单独拷到任何目录都能就地重建 `cmd\`。
+> 只有 `winux.exe` 的目录需要进 PATH（`winux` 到处可用）；垫片不进 PATH、
+> 不激活时不会遮蔽任何原生命令。辅助脚本一律 `winux-` 前缀，所以把 `bin\`
+> 加进系统 PATH 后不会引入裸 `activate`/`deactivate` 名字，不会与
+> conda/Python venv 等其它工具的激活脚本冲突。cmd.exe 激活会顺带安装
+> `mkdir/echo/date` 的 doskey 宏（见下文「cmd.exe 内建命令」一节）。
 
 ## 激活原理（venv 式会话机制）
 
@@ -65,9 +68,10 @@ call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 | `deactivate` 恢复 PATH | `deactivate` 恢复 PATH + **精确还原被删的别名**（快照）+ 清 cmd 的 doskey 宏 |
 | 不激活也能用 `venv\Scripts\python.exe` | 不激活也能用 `winux cp ...` 或直接调 `bin\cmd\cp.cmd` |
 
-`winux activate` / `winux deactivate` 是内建命令：子进程改不了父 shell 的
-环境，所以它们**识别父 shell**（PowerShell 还是 cmd.exe，`--shell` 可覆盖）后
-打印一行让 shell 自己执行的代码——PowerShell 打 `. '…\winux-activate.ps1'`（配
+`winux activate` / `winux deactivate` 是内建命令：先按 **md5 增量**把内嵌的
+垫片与辅助脚本解压到 exe 旁（见上「布局与命名」），再**识别父 shell**
+（PowerShell 还是 cmd.exe，`--shell` 可覆盖）后打印一行让 shell 自己执行的
+代码——PowerShell 打 `. '…\winux-activate.ps1'`（配
 `| iex` 执行），cmd 打 `call "…\cmd\winux-activate.cmd"`（配
 `for /f "delims=" %l in ('winux activate') do @%l` 执行）。这样只要有
 `winux` 就能在任意位置激活，不再需要 install.ps1（install 只是把「全局
@@ -469,6 +473,8 @@ winux/
 │  ├─ proc.go        ps（+ proc_windows.go 的 WMI 快照与属主解析）
 │  ├─ netstat.go     netstat / ss（+ net_windows.go 的 iphlpapi 表读取）
 │  ├─ ip.go          ipconfig / ip / nmcli / nmtui（+ ip_windows.go 适配器列表）
+│  ├─ activate.go      winux activate/deactivate（父进程识别，winux- 前缀）
+│  ├─ shimgen.go       内嵌垫片解压（md5 增量）+ winux shims（+ shimdata/ 模板）
 │  ├─ term_windows.go  控制台原始模式、按键解码、终端尺寸（Windows）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）
@@ -476,7 +482,7 @@ winux/
 ├─ README.md        使用文档（快速开始/命令表/各命令说明）
 ├─ CHANGELOG.md     更新记录（历次功能与修复，倒序）
 ├─ .gitattributes   文本统一 LF、二进制不规范化
-├─ build.ps1        构建 + 生成垫片与激活脚本
+├─ build.ps1        构建（垫片/激活脚本内嵌于 exe，构建后经 `winux shims` 解压）
 ├─ install.ps1      持久化安装（用户 PATH + PowerShell 配置档）
 ├─ smoke.ps1        双 shell 端到端冒烟测试（-Network 额外跑只读网络段）
 └─ bin/             构建产物：winux.exe、winux-activate.ps1/winux-deactivate.ps1

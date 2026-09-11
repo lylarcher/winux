@@ -116,6 +116,13 @@ func emitActivate(args []string, name, psFile, cmdFile string) int {
 		return 1
 	}
 	dir := filepath.Dir(exe)
+	// The .cmd shims / .ps1 helpers are embedded in winux.exe and materialized
+	// here (md5-incremental) so the one-liner below points at files that exist,
+	// even if winux.exe was copied somewhere without its cmd\ directory.
+	if err := ensureShims(); err != nil {
+		warn(name, "%v", err)
+		return 1
+	}
 	shell := f.Str("shell")
 	if shell == "" {
 		shell = detectShell()

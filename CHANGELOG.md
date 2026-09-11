@@ -3,6 +3,15 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · 垫片内嵌进 winux.exe，激活时按 md5 增量解压**：`build.ps1`
+  不再生成任何 .cmd/.ps1 文件——全部命令垫片（由命令表动态合成）与 5 个辅助
+  脚本（`winux.cmd`、`cmd\winux-activate.cmd`/`winux-deactivate.cmd`、
+  `winux-activate.ps1`/`winux-deactivate.ps1`，存于 `core/shimdata/` 并用
+  `//go:embed` 打进二进制）都由 winux.exe 自带。`winux activate`/`deactivate`
+  在打印激活指令前先把这些文件解压到 exe 旁（目录不存在则创建；文件已存在
+  且 md5 相同则跳过、不重写，md5 不同才覆盖），新增 `winux shims` 命令显式
+  解压并清理 cmd\ 里过期的垫片（build.ps1 构建后调用，install.ps1 也先调用
+  一次）。winux.exe 单独拷到任何目录都能就地重建 cmd\。
 - **2026-09-11 · 更新记录独立成 `CHANGELOG.md`**：从 README 拆出，README 的
   「更新记录」一节只留指向本文件的链接，避免文档臃肿。
 - **2026-09-11 · 激活重构为「winux.exe 进 PATH + `winux activate`」模型**：所有
