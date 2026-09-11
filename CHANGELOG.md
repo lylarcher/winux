@@ -3,6 +3,13 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · venv 式提示符前缀 `(winux)`**：激活后每个提示行前面出现
+  `(winux) `（像 Python venv 的 `(.venv)`），一眼看出当前窗口已激活。cmd 把
+  `(winux) ` 前置到 `PROMPT` 变量（原值存 `WINUX_OLD_PROMPT`，含未设置时回退
+  cmd 默认 `$P$G` 的情况），PowerShell 安装 `prompt` 函数（保存原函数体
+  `$global:winuxSavedPrompt`，调用原函数后加前缀）；deactivate 都精确还原。
+  重复 activate 不叠加前缀（幂等）。smoke 新增 PS 与 cmd 双 shell 的提示符
+  断言（174 项全绿）。
 - **2026-09-11 · cmd 激活一键化**：`winux-activate.cmd`/`winux-deactivate.cmd`
   改为**自定位**（根据自身位置推算垫片目录：在 `cmd\` 里则 exe 上一级，在
   exe 旁则垫片在 `cmd\` 子目录），同一份内嵌模板解压到**两处**——`cmd\`

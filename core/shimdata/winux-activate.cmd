@@ -18,6 +18,14 @@ if exist "%~dp0..\winux.exe" (
 if not defined WINUX_OLD_PATH set "WINUX_OLD_PATH=%PATH%"
 set "PATH=%WINUX_SHIMS%;%WINUX_EXE%;%PATH%"
 set "WINUX_ACTIVE=1"
+rem venv-style prompt prefix: every prompt line shows `(winux) ` in front (like
+rem Python's (.venv) prefix) so an activated window is recognizable at a glance.
+rem The previous PROMPT is saved so winux-deactivate.cmd can restore it exactly
+rem (PROMPT may be unset, in which case cmd's default is $P$G).
+if not defined WINUX_OLD_PROMPT (
+    if defined PROMPT (set "WINUX_OLD_PROMPT=%PROMPT%") else (set "WINUX_OLD_PROMPT=$P$G")
+)
+set "PROMPT=(winux) %WINUX_OLD_PROMPT%"
 rem cmd.exe resolves its own internal commands before PATH, so bind those names
 rem to winux with doskey macros (interactive sessions only, batch files unaffected).
 rem `cd` is routed through the winux resolver so `cd -`, `cd ~`, `cd /` and

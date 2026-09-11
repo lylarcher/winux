@@ -65,6 +65,10 @@ try {
     Write-Host '== PowerShell section ==' -ForegroundColor Cyan
     . (Join-Path $bin 'winux-activate.ps1') | Out-Null
 
+    # venv-style prompt prefix: the session prompt shows (winux) in front
+    Check 'activation prepends (winux) to the PowerShell prompt' `
+        ((Text (& prompt)) -like '(winux) *') (Text (& prompt))
+
     Check 'cp resolves to the winux shim, not the Copy-Item alias' `
         ((Get-Command cp -ErrorAction SilentlyContinue).Source -like "$bin*") "source=$((Get-Command cp -ErrorAction SilentlyContinue).Source)"
     Check 'activation prepends only the shims dir, not the exe dir' (($env:Path -split ';')[0] -eq $shims) (($env:Path -split ';')[0])
@@ -406,6 +410,8 @@ EOF
 
     . (Join-Path $bin 'winux-deactivate.ps1')
     Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
+    Check 'deactivate restored the original PowerShell prompt' `
+        ((Text (& prompt)) -notlike '(winux) *') (Text (& prompt))
     Check 'deactivate cleared the activation markers' ((($null -eq $env:WINUX_ACTIVE) -and ($null -eq $env:WINUX_STATE)) -and ($null -eq $env:WINUX_OLD_PATH))
     Check 'deactivate removed winux from PATH' (($env:Path -split ';') -notcontains $bin) (($env:Path -split ';' | Where-Object { $_ -eq $bin }) -join ',')
     cd $work\src
@@ -520,10 +526,23 @@ rem the same lookup needs `call` (the classic batch-in-batch rule) - the bare
 rem name proves PATH resolution finds winux-activate.cmd next to winux.exe
 call winux-activate >nul
 if not defined WINUX_ACTIVE (echo FAIL one-word-activate & exit /b 31)
-if /i not "%WINUX_SHIMS%"=="$shims\" (echo FAIL one-word-shims=%WINUX_SHIMS% & exit /b 32)
+if /i not "%WINUX_SHIMS%"=="$shims\" (echo FAIL one-word-shims & exit /b 32)
 call winux-deactivate >nul
 if defined WINUX_ACTIVE (echo FAIL one-word-deactivate & exit /b 33)
 if /i not "%PATH%"=="%PRE%" (echo FAIL one-word-path & exit /b 34)
+rem venv-style prompt prefix: custom PROMPT keeps its value with (winux) prepended
+set "PROMPT=CP: "
+call winux-activate >nul
+if /i not "%PROMPT%"=="(winux) CP: " (echo FAIL one-word-prompt & exit /b 35)
+call winux-deactivate >nul
+if /i not "%PROMPT%"=="CP: " (echo FAIL one-word-prompt-restore & exit /b 36)
+rem unset PROMPT falls back to cmd's default ($P$G) with the prefix
+set "PROMPT="
+set "WINUX_OLD_PROMPT="
+call winux-activate >nul
+if /i not "%PROMPT%"=="(winux) `$P`$G" (echo FAIL one-word-prompt-default & exit /b 37)
+call winux-deactivate >nul
+if /i not "%PROMPT%"=="`$P`$G" (echo FAIL one-word-prompt-default-restore & exit /b 38)
 echo one-word-ok
 exit /b 0
 "@

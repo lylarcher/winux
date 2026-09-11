@@ -12,6 +12,16 @@ Remove-Item Env:WINUX_STATE -ErrorAction SilentlyContinue
 
 Remove-Item Function:cd -ErrorAction SilentlyContinue
 
+# restore the original prompt function (drop the (winux) prefix)
+if ($global:winuxPromptInstalled) {
+    if ($global:winuxSavedPrompt) {
+        Set-Item -Path Function:prompt -Value $global:winuxSavedPrompt
+    } else {
+        Remove-Item Function:prompt -ErrorAction SilentlyContinue
+    }
+    Remove-Variable -Scope Global -Name winuxSavedPrompt, winuxPromptInstalled -ErrorAction SilentlyContinue
+}
+
 if ($env:WINUX_OLD_PATH) {
     $env:Path = $env:WINUX_OLD_PATH
     Remove-Item Env:WINUX_OLD_PATH -ErrorAction SilentlyContinue

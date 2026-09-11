@@ -95,6 +95,24 @@ function cd {
     $env:WINUX_PREVDIR = $old
 }
 
+# venv-style prompt prefix: show `(winux) ` in front of every prompt line (like
+# Python's (.venv) prefix) so an activated window is recognizable at a glance.
+# The previous prompt function (default or user-customized) is saved and
+# restored by winux-deactivate.ps1.
+if (-not $global:winuxPromptInstalled) {
+    $global:winuxSavedPrompt = if (Test-Path Function:prompt) { (Get-Item Function:prompt).ScriptBlock } else { $null }
+    $global:winuxPromptInstalled = $true
+}
+function global:prompt {
+    if ($global:winuxSavedPrompt) {
+        $base = & $global:winuxSavedPrompt
+        if ($base -like '(winux) *') { return $base }
+        return "(winux) $base"
+    }
+    $loc = $executionContext.SessionState.Path.CurrentLocation
+    "(winux) PS $loc$('>' * ($nestedPromptLevel + 1)) "
+}
+
 Write-Host "winux activated from $winuxBin" -ForegroundColor Green
 Write-Host 'cp rm mv mkdir touch grep cat cd less vi and more now resolve to winux.' -ForegroundColor Green
 Write-Host 'Run "winux --help" for the whole command list.' -ForegroundColor Green

@@ -74,6 +74,7 @@ call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 | 只对当前终端进程生效，别的窗口不受影响 | 完全一样，每个窗口独立 |
 | 关窗口/新开窗口即失效 | 一样（无任何持久状态） |
 | `deactivate` 恢复 PATH | `deactivate` 恢复 PATH + **精确还原被删的别名**（快照）+ 清 cmd 的 doskey 宏 |
+| **提示符前缀 `(.venv)`** | **提示符前缀 `(winux)`**（cmd 改 `PROMPT`、PowerShell 装 `prompt` 函数；deactivate 精确还原原提示符） |
 | 不激活也能用 `venv\Scripts\python.exe` | 不激活也能用 `winux cp ...` 或直接调 `bin\cmd\cp.cmd` |
 
 `winux activate` / `winux deactivate` 是内建命令：先按 **md5 增量**把内嵌的
@@ -87,7 +88,7 @@ PATH 上，所以**直接输入 `winux-activate` 一个词**就能激活（`winu
 同理），连 for /f 都不用。这样只要有 `winux` 就能在任意位置激活，不再需要
 install.ps1（install 只是把「全局 winux + 每窗口自动激活」自动化）。
 
-`activate` 具体做三件事（都是会话级）：
+`activate` 具体做四件事（都是会话级）：
 
 1. **前置 PATH**：把 `bin\cmd`（垫片目录）插到当前会话 `$env:Path` 最前，让
    垫片 `xxx.cmd` 在名字解析时先于 System32 里的原生 exe 被找到；原 PATH 存入
@@ -100,6 +101,10 @@ install.ps1（install 只是把「全局 winux + 每窗口自动激活」自动�
 3. **安装 cmd 的 doskey 宏**（`cmd\winux-activate.cmd`）：`mkdir/echo/date` 是 cmd
    **内建命令**，内建优先级高于 PATH，垫片抢不到，所以用宏把输入行改写；
    宏只作用于该交互窗口的行编辑器，窗口一关即失效，连子 cmd 进程都不继承。
+4. **提示符加 `(winux)` 前缀**（venv 风格）：cmd 把 `(winux) ` 前置到 `PROMPT`
+   变量（原值存入 `WINUX_OLD_PROMPT`），PowerShell 安装一个 `prompt` 函数
+   （原函数体保存为 `$global:winuxSavedPrompt`）——激活的窗口一眼可辨，
+   deactivate 把两者都精确还原。
 
 名字解析优先级（这就是「遮蔽」而非「替换」的原理）：
 

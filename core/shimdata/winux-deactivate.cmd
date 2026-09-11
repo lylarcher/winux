@@ -20,8 +20,11 @@ if defined WINUX_OLD_PATH (
     )
     endlocal & set "PATH=%NP%"
 )
+rem drop the (winux) prompt prefix, restoring the exact previous PROMPT
+if defined WINUX_OLD_PROMPT set "PROMPT=%WINUX_OLD_PROMPT%"
 set "WINUX_ACTIVE="
 set "WINUX_SHIMS="
 set "WINUX_EXE="
 set "WINUX_OLD_PATH="
+set "WINUX_OLD_PROMPT="
 echo winux deactivated: mkdir echo date cd are cmd.exe built-ins again.
