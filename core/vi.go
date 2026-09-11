@@ -1142,22 +1142,59 @@ func (e *Editor) ensureVisible(textRows int) {
 	if e.top < 0 {
 		e.top = 0
 	}
-	width := e.Scr.Cols
-	if e.Number {
-		width -= 6
+	// Horizontal scrolling is cell-based and lives in draw() where the
+	// terminal width is known: rune indices alone cannot express the column
+	// of a line containing wide (CJK) characters.
+}
+
+// ------------------------------------------------------- cell width (CJK) ---
+
+// runewidth returns the number of terminal cells rune r occupies: 2 for East
+// Asian wide/fullwidth glyphs (CJK, Hangul Jamo/syllables, fullwidth forms,
+// emoji and CJK extension planes), 1 for everything else. Horizontal cursor
+// placement, segment truncation and scrolling all use these cells, otherwise
+// the cursor lands half way through a line of Chinese text.
+func runewidth(r rune) int {
+	switch {
+	case r >= 0x1100 && r <= 0x115f, // Hangul Jamo
+		r >= 0x2e80 && r <= 0x9fff, // CJK Radicals .. CJK Unified Ideographs
+		r >= 0xac00 && r <= 0xd7a3, // Hangul syllables
+		r >= 0xf900 && r <= 0xfaff, // CJK compatibility ideographs
+		r >= 0xfe30 && r <= 0xfe4f, // CJK compatibility forms
+		r >= 0xff00 && r <= 0xff60, // fullwidth forms
+		r >= 0xffe0 && r <= 0xffe6,
+		r >= 0x1f300 && r <= 0x1fbff, // emoji and symbols (incl. modifiers)
+		r >= 0x20000 && r <= 0x2fffd, // CJK extension B and beyond
+		r >= 0x30000 && r <= 0x3fffd:
+		return 2
 	}
-	if width < 1 {
-		width = 1
+	return 1
+}
+
+// cellWidth returns the total terminal cells occupied by the runes in s.
+func cellWidth(s []rune) int {
+	n := 0
+	for _, r := range s {
+		n += runewidth(r)
 	}
-	if e.Col < e.Left {
-		e.Left = e.Col
+	return n
+}
+
+// truncToCells cuts seg to at most maxCells terminal cells without splitting
+// a wide (2-cell) rune in half.
+func truncToCells(seg []rune, maxCells int) []rune {
+	if maxCells < 1 {
+		return nil
 	}
-	if e.Col-e.Left >= width {
-		e.Left = e.Col - width + 1
+	cells := 0
+	for i, r := range seg {
+		w := runewidth(r)
+		if cells+w > maxCells {
+			return seg[:i]
+		}
+		cells += w
 	}
-	if e.Left < 0 {
-		e.Left = 0
-	}
+	return seg
 }
 
 func (e *Editor) DisplayLine(idx, cols int) string {
@@ -1176,9 +1213,9 @@ func (e *Editor) DisplayLine(idx, cols int) string {
 	} else {
 		seg = nil
 	}
-	if len(seg) > width {
-		seg = seg[:width]
-	}
+	// cut by terminal cells, never by rune count, so wide (CJK) glyphs do
+	// not overflow the right edge (and never get split in half)
+	seg = truncToCells(seg, width)
 	text := string(seg)
 	if e.SearchRe != nil {
 		text = highlight(text, e.SearchRe) + ansiReset
@@ -1221,6 +1258,25 @@ func (e *Editor) draw() {
 		textRows = 1
 	}
 	e.ensureVisible(textRows)
+	width := cols
+	if e.Number {
+		width -= 6
+	}
+	if width < 1 {
+		width = 1
+	}
+	// Cell-accurate horizontal scrolling: advance e.Left until the cursor's
+	// terminal cell column fits inside the window (rune indices alone would
+	// leave the cursor stranded in the middle of wide/CJK text).
+	line := e.curLine()
+	if e.Col < e.Left {
+		e.Left = e.Col
+	}
+	colRel := cellWidth(line[e.Left:e.Col])
+	for colRel >= width && e.Left < e.Col {
+		colRel -= runewidth(line[e.Left])
+		e.Left++
+	}
 	var b strings.Builder
 	b.WriteString("\x1b[2J\x1b[H")
 	for i := 0; i < textRows; i++ {
@@ -1234,7 +1290,7 @@ func (e *Editor) draw() {
 	}
 	b.WriteString("\x1b[7m" + e.StatusLine(cols) + "\x1b[0m")
 	row := e.Row - e.top + 1
-	col := e.Col - e.Left + 1
+	col := colRel + 1
 	if e.Number {
 		col += 6
 	}
