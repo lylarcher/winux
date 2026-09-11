@@ -1,3 +1,5 @@
+//go:build windows
+
 package core
 
 // df reports file system disk space usage (GNU-style), mapped honestly to

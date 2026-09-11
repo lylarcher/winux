@@ -16,25 +16,33 @@
 ## 快速开始
 
 ```powershell
-# 1) 构建（生成 winux.exe + 每个命令的 .cmd 垫片 + 激活脚本）
+# 1) 构建（生成 bin\winux.exe + bin\cmd\ 下的 .cmd 垫片 + 激活脚本）
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 2) 激活当前 PowerShell 会话
-. .\bin\activate.ps1
-
-# 3) 永久安装（写入用户 PATH，并在 PowerShell 配置档里加激活行）
+# 2) 让 `winux` 全局可用：把 winux.exe 所在目录加入 PATH（推荐用 install.ps1，
+#    它会写用户 PATH 并在 PowerShell 配置档里加激活行；也可手动添加 bin\ 目录）。
+#    只需加 winux.exe 的目录——cmd\ 里的 .cmd 垫片不需要进 PATH。
 powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
 
-cmd.exe 的激活方式是 `call .\bin\activate.cmd`（会顺带安装 `mkdir/echo/date`
-的 doskey 宏，见下文「cmd.exe 内建命令」一节）。
+# 3) 激活当前会话（任意目录执行；winux 会识别父 shell 并打印对应的一行）：
+winux activate | iex                                  # PowerShell
+for /f "delims=" %l in ('winux activate') do @%l      # cmd.exe
+```
 
 退出激活（撤销 PATH/别名/宏/环境标记，恢复到激活前状态）：
 
 ```powershell
-. .\bin\deactivate.ps1      # PowerShell
-call .\bin\deactivate.cmd   # cmd.exe
+winux deactivate | iex                                  # PowerShell
+for /f "delims=" %l in ('winux deactivate') do @%l      # cmd.exe
+# 或直接（不依赖 PATH）：
+. .\bin\deactivate.ps1        # PowerShell
+call .\bin\cmd\deactivate.cmd # cmd.exe
 ```
+
+> **布局**：`winux.exe` 与 `cmd\` 目录并排。只有 `winux.exe` 的目录需要进 PATH
+> （`winux` 到处可用）；全部 `.cmd` 垫片放在 `cmd\` 里，由激活脚本在**当前会话**
+> 前置到 PATH，因此不激活时它们不会遮蔽任何原生命令。cmd.exe 激活会顺带安装
+> `mkdir/echo/date` 的 doskey 宏（见下文「cmd.exe 内建命令」一节）。
 
 ## 激活原理（venv 式会话机制）
 
@@ -48,22 +56,31 @@ call .\bin\deactivate.cmd   # cmd.exe
 
 | venv | winux |
 |---|---|
-| `Scripts\activate.ps1`：加 `Scripts` 到 PATH + 设 `VIRTUAL_ENV` | `activate.ps1`：加 `bin` 到 PATH + 设 `WINUX_ACTIVE`，并删除 PS 同名别名 |
+| `Scripts\activate.ps1`：加 `Scripts` 到 PATH + 设 `VIRTUAL_ENV` | `activate.ps1`：加 `bin\cmd`（垫片目录）到 PATH + 设 `WINUX_ACTIVE`，并删除 PS 同名别名 |
 | 只对当前终端进程生效，别的窗口不受影响 | 完全一样，每个窗口独立 |
 | 关窗口/新开窗口即失效 | 一样（无任何持久状态） |
 | `deactivate` 恢复 PATH | `deactivate` 恢复 PATH + **精确还原被删的别名**（快照）+ 清 cmd 的 doskey 宏 |
-| 不激活也能用 `venv\Scripts\python.exe` | 不激活也能用 `winux cp ...` 或直接调 `bin\cp.cmd` |
+| 不激活也能用 `venv\Scripts\python.exe` | 不激活也能用 `winux cp ...` 或直接调 `bin\cmd\cp.cmd` |
+
+`winux activate` / `winux deactivate` 是内建命令：子进程改不了父 shell 的
+环境，所以它们**识别父 shell**（PowerShell 还是 cmd.exe，`--shell` 可覆盖）后
+打印一行让 shell 自己执行的代码——PowerShell 打 `. '…\activate.ps1'`（配
+`| iex` 执行），cmd 打 `call "…\cmd\activate.cmd"`（配
+`for /f "delims=" %l in ('winux activate') do @%l` 执行）。这样只要有
+`winux` 就能在任意位置激活，不再需要 install.ps1（install 只是把「全局
+winux + 每窗口自动激活」自动化）。
 
 `activate` 具体做三件事（都是会话级）：
 
-1. **前置 PATH**：把 `bin\` 插到当前会话 `$env:Path` 最前，让垫片 `xxx.cmd`
-   在名字解析时先于 System32 里的原生 exe 被找到；原 PATH 存入
-   `WINUX_OLD_PATH` 供 deactivate 精确还原。
+1. **前置 PATH**：把 `bin\cmd`（垫片目录）插到当前会话 `$env:Path` 最前，让
+   垫片 `xxx.cmd` 在名字解析时先于 System32 里的原生 exe 被找到；原 PATH 存入
+   `WINUX_OLD_PATH` 供 deactivate 精确还原。`winux.exe` 本身假定已在 PATH
+   （这正是 cmd\ 布局的意义：系统 PATH 只放 winux.exe，垫片不进 PATH）。
 2. **删除 PowerShell 同名别名/函数**：PS 里 `cp/ls/cat/ps/echo` 等本是**别名**
    （指向 `Copy-Item`/`Get-ChildItem`…），别名解析优先于 PATH，不删掉就轮不到
    垫片。删的是别名，`Copy-Item` 等 cmdlet 本身一直都在；被删的别名会快照到
    每会话临时文件，deactivate 按原样还原。
-3. **安装 cmd 的 doskey 宏**（`activate.cmd`）：`mkdir/echo/date` 是 cmd
+3. **安装 cmd 的 doskey 宏**（`cmd\activate.cmd`）：`mkdir/echo/date` 是 cmd
    **内建命令**，内建优先级高于 PATH，垫片抢不到，所以用宏把输入行改写；
    宏只作用于该交互窗口的行编辑器，窗口一关即失效，连子 cmd 进程都不继承。
 
@@ -72,7 +89,7 @@ call .\bin\deactivate.cmd   # cmd.exe
 - PowerShell：`别名/函数 → cmdlet → PATH 外部命令`
 - cmd.exe：`内建命令 → PATH 外部命令`
 
-所以 winux 只是让 `cp` 这个名字在**这个会话里**先解析到 `bin\cp.cmd →
+所以 winux 只是让 `cp` 这个名字在**这个会话里**先解析到 `bin\cmd\cp.cmd →
 winux.exe cp`；`C:\Windows\System32\sort.exe`、cmd 的 `mkdir` 内建等原生
 文件原地未动，只是暂时排不到。两个值得知道的细节：
 
@@ -83,9 +100,10 @@ winux.exe cp`；`C:\Windows\System32\sort.exe`、cmd 的 `mkdir` 内建等原生
   小文件（故意设计，让 PS 钩子/cmd 宏/sh 内建三入口共享），不随窗口关闭
   消失，无副作用，deactivate 也不删它。
 
-只有 `install.ps1` 是「永久」路线：把 `bin\` 写入**用户** PATH 并在
-PowerShell `$PROFILE` 末尾追加一行 activate，从此新开窗口自动生效——那是
-venv 之外另一种显式选择。
+`install.ps1` 是「永久」路线：把 `bin\`（winux.exe 目录）写入**用户** PATH
+并在 PowerShell `$PROFILE` 末尾追加一行激活，从此新开窗口自动生效——那是
+venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用，
+`winux activate` 也能随时按需激活。
 
 ## 已实现命令
 
@@ -173,7 +191,7 @@ Windows 同时接受 `\` 和 `/`，winux 的所有命令都遵循这一习惯，
 
 ## PowerShell 说明
 
-- `activate.ps1` 会**删除与我们有替代品的同名别名/函数**（按 `bin\*.cmd` 动态计算），
+- `activate.ps1` 会**删除与我们有替代品的同名别名/函数**（按 `bin\cmd\*.cmd` 动态计算），
   所以激活后 `ls`、`cp`、`rm`、`mv`、`cat`、`sort`、`which` 等一律解析到 winux
   垫片；PowerShell 自己的 `dir/cls/md/type/copy/move/rd/gc` 等因没有同名垫片而
   原样保留。
@@ -456,11 +474,18 @@ winux/
 ├─ build.ps1        构建 + 生成垫片与激活脚本
 ├─ install.ps1      持久化安装（用户 PATH + PowerShell 配置档）
 ├─ smoke.ps1        双 shell 端到端冒烟测试（-Network 额外跑只读网络段）
-└─ bin/             构建产物：winux.exe、*.cmd 垫片、activate.*
+└─ bin/             构建产物：winux.exe、activate.ps1/deactivate.ps1
+   └─ cmd/          *.cmd 垫片（cp.cmd/rm.cmd/…）+ activate.cmd/deactivate.cmd
 ```
 
 ## 更新记录
 
+- **2026-09-11 · 激活重构为「winux.exe 进 PATH + `winux activate`」模型**：所有
+  `.cmd` 垫片移到 `winux.exe` 旁的 `cmd\` 子目录，系统 PATH 只需加 winux.exe
+  所在目录（垫片不进 PATH）；新增内建命令 `winux activate`/`winux deactivate`，
+  自动识别父 shell 并打印一行激活指令（PS 配 `| iex`，cmd 配
+  `for /f "delims=" %l in ('winux activate') do @%l`），任意目录即可激活/退出，
+  无需 install.ps1（install 保留为「永久」路线）。
 - **2026-09-11 · README 新增「激活原理（venv 式会话机制）」一节**：讲清
   activate/deactivate 的会话级模型——只改当前终端进程的 PATH/别名/宏，不改
   系统 PATH 注册表、不替换不删除任何原生文件（优先级遮蔽而非覆盖）、关窗口

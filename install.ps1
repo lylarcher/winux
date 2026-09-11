@@ -6,7 +6,8 @@
 .DESCRIPTION
     By default it only records the PATH and adds the PowerShell profile hook so
     every new PowerShell window has the commands available. cmd.exe users either
-    run `call bin\activate.cmd` or add the same directory to PATH manually.
+    run `call bin\cmd\activate.cmd` or use `winux activate` from any shell
+    (once bin\ is on PATH, `winux` itself is callable everywhere).
 
     -Uninstall removes the recorded entries (it never deletes files).
 
@@ -90,8 +91,10 @@ if (-not $NoProfile) {
 Write-Host ''
 Write-Host 'Done. Open a NEW PowerShell or cmd.exe window:' -ForegroundColor Yellow
 Write-Host '  PowerShell:  cp -r src dst;  grep -rin todo .;  vi file.txt'
-Write-Host '  cmd.exe    :  mkdir -p a\b  (via doskey macros);  or call bin\activate.cmd'
+Write-Host '  cmd.exe    :  mkdir -p a\b  (via doskey macros);  or call bin\cmd\activate.cmd'
 Write-Host ''
-Write-Host 'Activation is also available on demand:' -ForegroundColor Yellow
-Write-Host ("  . {0}\activate.ps1      (PowerShell)" -f $bin)
-Write-Host ("  call {0}\activate.cmd    (cmd.exe)" -f $bin)
+Write-Host 'Activation is also available on demand (winux.exe on PATH):' -ForegroundColor Yellow
+Write-Host ('  winux activate | iex                    (PowerShell)')
+Write-Host ('  for /f "delims=" %l in (''winux activate'') do @%l   (cmd.exe)')
+Write-Host ("  . {0}\activate.ps1                     (PowerShell, direct)" -f $bin)
+Write-Host ("  call {0}\cmd\activate.cmd               (cmd.exe, direct)" -f $bin)

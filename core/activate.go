@@ -1,0 +1,148 @@
+//go:build windows
+
+package core
+
+// `winux activate` / `winux deactivate` activate or deactivate winux in the
+// current terminal from anywhere — the new primary way to use the tool once
+// winux.exe is on PATH (no install.ps1 needed). A child process cannot change
+// the parent shell's environment, so these commands print the one-liner that
+// makes the parent shell do the work:
+//
+//	PowerShell :  winux activate | iex          (deactivate: winux deactivate | iex)
+//	cmd.exe    :  for /f "delims=" %l in ('winux activate') do @%l
+//
+// The shell is detected from the parent process image name (with a
+// PSModulePath fallback); --shell overrides it. The printed line simply
+// dot-sources activate.ps1 / calls cmd\activate.cmd, keeping a single source
+// of truth for the actual activation logic.
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"unsafe"
+)
+
+func init() {
+	addCmd("activate", "activate winux in the current shell (prints the one-liner to eval: PowerShell `winux activate | iex`, cmd `for /f \"delims=\" %l in ('winux activate') do @%l`)", cmdActivate)
+	addCmd("deactivate", "deactivate winux in the current shell (prints the one-liner to eval)", cmdDeactivate)
+}
+
+var (
+	procNtQueryInformationProcess = ntdll.NewProc("NtQueryInformationProcess")
+	procQueryFullProcessImageName = kernel32.NewProc("QueryFullProcessImageNameW")
+)
+
+type processBasicInformation struct {
+	Reserved1       uintptr
+	PebBaseAddress  uintptr
+	Reserved2       [2]uintptr
+	UniqueProcessId uintptr
+	InheritedFromUniqueProcessId uintptr
+}
+
+// parentShellName detects whether winux was launched from PowerShell or cmd
+// by reading the parent process image name (robust inside Windows Terminal,
+// where the console host differs from the shell).
+func parentShellName() string {
+	var pbi processBasicInformation
+	st, _, _ := procNtQueryInformationProcess.Call(
+		^uintptr(0), // current process pseudo handle
+		0,           // ProcessBasicInformation
+		uintptr(unsafe.Pointer(&pbi)),
+		uintptr(unsafe.Sizeof(pbi)),
+		0,
+	)
+	if st != 0 || pbi.InheritedFromUniqueProcessId == 0 {
+		return ""
+	}
+	h, _, _ := procOpenProcess.Call(0x1000, 0, pbi.InheritedFromUniqueProcessId) // PROCESS_QUERY_LIMITED_INFORMATION
+	if h == 0 {
+		return ""
+	}
+	defer procCloseHandle.Call(h)
+	buf := make([]uint16, 512)
+	n := uint32(len(buf))
+	r, _, _ := procQueryFullProcessImageName.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)))
+	if r == 0 {
+		return ""
+	}
+	name := strings.ToLower(filepath.Base(syscall.UTF16ToString(buf[:n])))
+	switch {
+	case strings.HasPrefix(name, "powershell"), strings.HasPrefix(name, "pwsh"):
+		return "powershell"
+	case name == "cmd.exe":
+		return "cmd"
+	}
+	return ""
+}
+
+func detectShell() string {
+	if s := parentShellName(); s != "" {
+		return s
+	}
+	// fallback: PowerShell sets PSModulePath for its children, cmd does not
+	if os.Getenv("PSModulePath") != "" {
+		return "powershell"
+	}
+	return "cmd"
+}
+
+func cmdActivate(args []string) int {
+	return emitActivate(args, "activate", "activate.ps1", filepath.Join("cmd", "activate.cmd"))
+}
+
+func cmdDeactivate(args []string) int {
+	return emitActivate(args, "deactivate", "deactivate.ps1", filepath.Join("cmd", "deactivate.cmd"))
+}
+
+func emitActivate(args []string, name, psFile, cmdFile string) int {
+	f := NewFlags(
+		&Flag{Name: "shell", Long: "shell", HasArg: true, ArgName: "auto|powershell|cmd", Help: "which shell to target (default: detect the parent shell)"},
+	)
+	if !parseOrDie(name, f, args) {
+		return 2
+	}
+	if handleHelpVersion(name, "[--shell auto|powershell|cmd]", f) {
+		return 0
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		warn(name, "%v", err)
+		return 1
+	}
+	dir := filepath.Dir(exe)
+	shell := f.Str("shell")
+	if shell == "" {
+		shell = detectShell()
+	}
+	switch shell {
+	case "powershell":
+		p := filepath.Join(dir, psFile)
+		if !fileExists(p) {
+			warn(name, "%s not found - run build.ps1 first", p)
+			return 1
+		}
+		fmt.Printf(". '%s'\n", strings.ReplaceAll(p, "'", "''"))
+	case "cmd":
+		p := filepath.Join(dir, cmdFile)
+		if !fileExists(p) {
+			warn(name, "%s not found - run build.ps1 first", p)
+			return 1
+		}
+		fmt.Printf("call \"%s\"\n", p)
+	default:
+		warn(name, "unknown shell '%s' (use powershell or cmd)", shell)
+		return 1
+	}
+	if isTerminal(os.Stdout) {
+		if shell == "powershell" {
+			fmt.Fprintf(os.Stderr, "提示: 完成%s请执行  winux %s | iex\n", name, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "提示: 完成%s请执行  for /f \"delims=\" %%l in ('winux %s') do @%%l\n", name, name)
+		}
+	}
+	return 0
+}

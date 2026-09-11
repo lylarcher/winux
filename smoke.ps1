@@ -23,6 +23,7 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $bin = Join-Path $root 'bin'
 $winux = Join-Path $bin 'winux.exe'
+$shims = Join-Path $bin 'cmd'
 if (-not (Test-Path $winux)) { throw 'run build.ps1 first' }
 
 $script:pass = 0
@@ -66,6 +67,16 @@ try {
 
     Check 'cp resolves to the winux shim, not the Copy-Item alias' `
         ((Get-Command cp -ErrorAction SilentlyContinue).Source -like "$bin*") "source=$((Get-Command cp -ErrorAction SilentlyContinue).Source)"
+    Check 'activation prepends only the shims dir, not the exe dir' (($env:Path -split ';')[0] -eq $shims) (($env:Path -split ';')[0])
+
+    # `winux activate` / `winux deactivate` are the from-anywhere activation
+    # (winux.exe on PATH): they print the one-liner for the detected shell.
+    $actLine = Text (& $winux activate)
+    Check 'winux activate prints the PowerShell activation one-liner' ($actLine -eq ". '$bin\activate.ps1'") $actLine
+    $actCmdLine = Text (& $winux activate --shell cmd)
+    Check 'winux activate --shell cmd prints the batch call line' ($actCmdLine -eq "call `"$shims\activate.cmd`"") $actCmdLine
+    $deLine = Text (& $winux deactivate)
+    Check 'winux deactivate prints the deactivation one-liner' ($deLine -eq ". '$bin\deactivate.ps1'") $deLine
 
     # ---------------------------------------------------------- fixtures ----
     mkdir -p src/sub | Out-Null
@@ -106,14 +117,14 @@ try {
     Check 'rm -f removed a file' (-not (Test-Path src/sub/c.log))
     rm -rf globbed
     Check 'rm -rf removed a directory tree' (-not (Test-Path globbed))
-    $code = Invoke-CmdLine "`"$bin\rm.cmd`" -rf C:\ >nul 2>&1"
+    $code = Invoke-CmdLine "`"${shims}\rm.cmd`" -rf C:\ >nul 2>&1"
     Check 'rm -rf C:\ is refused (as GNU rm does)' ($code -ne 0) "exit=$code"
-    $code = Invoke-CmdLine "`"$bin\rm.cmd`" -f definitely-missing.txt >nul 2>&1"
+    $code = Invoke-CmdLine "`"${shims}\rm.cmd`" -f definitely-missing.txt >nul 2>&1"
     Check 'rm -f on a missing file succeeds' ($code -eq 0) "exit=$code"
 
     # ---------------------------------------------------------- text tools --
     Check 'grep -rin finds matches recursively' ((Text (grep -rin alpha .)) -match 'a\.txt')
-    $code = Invoke-CmdLine "`"$bin\grep.cmd`" -q nomatch-xyz src\a.txt >nul 2>&1"
+    $code = Invoke-CmdLine "`"${shims}\grep.cmd`" -q nomatch-xyz src\a.txt >nul 2>&1"
     Check 'grep exits 1 when nothing matches' ($code -eq 1) "exit=$code"
     Check 'grep -c counts matching lines' ((Text (grep -c 'o' lines.txt)) -eq '3')
     Check 'head -n 1 prints the first line' ((Text (head -n 1 src/a.txt)) -eq 'alpha')
@@ -141,7 +152,7 @@ try {
     Check 'date +%Y prints the year' ((Text (date +%Y)) -eq (Get-Date).Year.ToString())
     Check 'date +%F prints an ISO date' ((Text (date +%F)) -match '^\d{4}-\d{2}-\d{2}$')
     Check 'which locates cmd.exe' ((Text (which cmd.exe)) -match 'cmd\.exe')
-    $code = Invoke-CmdLine "`"$bin\which.cmd`" no-such-command-xyz >nul 2>&1"
+    $code = Invoke-CmdLine "`"${shims}\which.cmd`" no-such-command-xyz >nul 2>&1"
     Check 'which exits 1 for an unknown command' ($code -eq 1) "exit=$code"
     Check 'echo prints its arguments' ((Text (echo hello world)) -eq 'hello world')
     Check 'id prints a POSIX-shaped identity' ((Text (id)) -match 'uid=')
@@ -243,7 +254,7 @@ try {
     Check 'chmod -c reports the change' ($LASTEXITCODE -eq 0)
     chmod u=rw,go=r perm.txt | Out-Null
     Check 'chmod with a symbolic mode works' ($LASTEXITCODE -eq 0)
-    $bad = Invoke-CmdLine "`"$bin\chmod.cmd`" 999 perm.txt >nul 2>&1"
+    $bad = Invoke-CmdLine "`"${shims}\chmod.cmd`" 999 perm.txt >nul 2>&1"
     Check 'chmod rejects an invalid mode' ($bad -ne 0) "exit=$bad"
 
     Check 'cal 3 2025 shows March' ((Text (cal 3 2025)) -match 'March 2025')
@@ -263,7 +274,7 @@ try {
         Write-Host '  SKIP  chown --dry-run (account lookup not available in this environment)'
         $script:pass++
     }
-    $chgrp = Invoke-CmdLine "`"$bin\chgrp.cmd`" Users perm.txt >nul 2>&1"
+    $chgrp = Invoke-CmdLine "`"${shims}\chgrp.cmd`" Users perm.txt >nul 2>&1"
     Check 'chgrp explains that Windows has no group ownership' ($chgrp -ne 0) "exit=$chgrp"
 
     # -------------------------------------------------------------- processes --
@@ -299,7 +310,7 @@ try {
     Check 'ls -S sorts by size' (($LASTEXITCODE -eq 0))
     Check 'ls dir operand lists a subdirectory' ((Text (ls lsdir)) -match 'a\.txt')
     Check 'ls -R recurses with headers' ((Text (ls -R)) -match 'lsdir:')
-    $code = Invoke-CmdLine "`"$bin\ls.cmd`" missing-xyz >nul 2>&1"
+    $code = Invoke-CmdLine "`"${shims}\ls.cmd`" missing-xyz >nul 2>&1"
     Check 'ls on a missing path fails with exit 2' ($code -eq 2) "exit=$code"
 
     # ------------------------------------------------------------------- du --
@@ -315,7 +326,7 @@ try {
     Check 'du -c prints a grand total' ((Text (& $winux du -sc dudir)) -match 'total')
     Check 'du -B 1K accepts a block size' ((Text (& $winux du -B 1K -s dudir)) -match 'dudir')
     Check 'du supports --exclude' (-not ((Text (& $winux du -a --exclude '*.txt' dudir)) -match 'a\.txt'))
-    Check 'du on a missing path fails with exit 1' ((Invoke-CmdLine "`"$bin\du.cmd`" missing-xyz >nul 2>&1") -eq 1)
+    Check 'du on a missing path fails with exit 1' ((Invoke-CmdLine "`"${shims}\du.cmd`" missing-xyz >nul 2>&1") -eq 1)
 
     # ------------------------------------------------------------------- df --
     Write-Host '== df section ==' -ForegroundColor Cyan
@@ -330,8 +341,8 @@ try {
     $dfOneDrives = @($dfOne -split "`n" | Where-Object { $_ -match '^[A-Z]:\s' })
     Check 'df restricts the listing to an operand drive' (($dfOneDrives.Count -eq 1) -and ($dfOneDrives[0] -match [regex]::Escape($workVol))) $dfOne
     Check 'df --total -h appends a grand total row' ((Text (& $winux df --total -h)) -match '(?m)^total\s')
-    Check 'df -i explains that Windows has no inodes and fails' ((Invoke-CmdLine "`"$bin\df.cmd`" -i >nul 2>&1") -eq 1)
-    Check 'df rejects a nonexistent operand' ((Invoke-CmdLine "`"$bin\df.cmd`" Z:\definitely-not-a-drive >nul 2>&1") -eq 1)
+    Check 'df -i explains that Windows has no inodes and fails' ((Invoke-CmdLine "`"${shims}\df.cmd`" -i >nul 2>&1") -eq 1)
+    Check 'df rejects a nonexistent operand' ((Invoke-CmdLine "`"${shims}\df.cmd`" Z:\definitely-not-a-drive >nul 2>&1") -eq 1)
 
     # ------------------------------------------------------------------- ln --
     Write-Host '== ln section ==' -ForegroundColor Cyan
@@ -345,7 +356,7 @@ try {
     Set-Content -Path lnold2.txt -Value 'old' -Encoding ascii -NoNewline
     & $winux ln -b lnsrc.txt lnold2.txt | Out-Null
     Check 'ln -b backs up the existing destination' ((Test-Path lnold2.txt~) -and (Get-Content lnold2.txt -Raw) -eq 'hello')
-    $lnCode = Invoke-CmdLine "`"$bin\ln.cmd`" -s -t dudir lnsrc.txt >nul 2>&1"
+    $lnCode = Invoke-CmdLine "`"${shims}\ln.cmd`" -s -t dudir lnsrc.txt >nul 2>&1"
     if ($lnCode -eq 0) {
         Check 'ln -s -t creates the link inside the target directory' ((Test-Path dudir\lnsrc.txt))
     } else {
@@ -417,9 +428,9 @@ EOF
         Check 'ip route shows a default route' ((Text (& $winux ip r)) -match 'default|dev')
         Check 'nmcli lists devices' ((Text (& $winux nmcli)) -match 'DEVICE')
         Check 'ipconfig prints the configuration' ((Text (& $winux ipconfig)) -match 'IP')
-        $code = Invoke-CmdLine "`"$bin\ip.cmd`" addr add 9.9.9.9/32 dev x >nul 2>&1"
+        $code = Invoke-CmdLine "`"${shims}\ip.cmd`" addr add 9.9.9.9/32 dev x >nul 2>&1"
         Check 'ip addr add is refused (read-only policy)' ($code -eq 1) "exit=$code"
-        $code = Invoke-CmdLine "`"$bin\ipconfig.cmd`" /release >nul 2>&1"
+        $code = Invoke-CmdLine "`"${shims}\ipconfig.cmd`" /release >nul 2>&1"
         Check 'ipconfig /release is refused (read-only policy)' ($code -eq 1) "exit=$code"
     } else {
         Write-Host '  SKIP  network section (pass -Network, after explicit consent, to run the read-only network checks)'
@@ -429,7 +440,7 @@ EOF
     # --------------------------------------------------------- cmd.exe -------
     Write-Host '== cmd.exe section ==' -ForegroundColor Cyan
 
-    $macroOut = Text (& cmd /c "call `"$bin\activate.cmd`" >nul && doskey /macros")
+    $macroOut = Text (& cmd /c "call `"${shims}\activate.cmd`" >nul && doskey /macros")
     Check 'activate.cmd registers doskey macros for cmd built-ins' `
         ($macroOut -match 'mkdir=winux' -and $macroOut -match 'echo=winux' -and $macroOut -match 'date=winux') $macroOut
 
@@ -438,36 +449,39 @@ EOF
     $cmdScript = @"
 @echo off
 set WINUX=$winux
-set SHIMS=$bin
-call "$bin\activate.cmd" >nul
+set SHIMS=$shims
+rem activate through `winux activate --shell cmd` (the from-anywhere form):
+rem winux prints `call "path\cmd\activate.cmd"` and the for-loop runs it
+for /f "delims=" %%l in ('"$winux" activate --shell cmd') do %%l
+if not defined WINUX_ACTIVE (echo FAIL winux-activate & exit /b 18)
 cd /d "$work"
-call "$bin\mkdir.cmd" -p cmdtest\deep
+call "${shims}\mkdir.cmd" -p cmdtest\deep
 if not exist cmdtest\deep (echo FAIL mkdir -p & exit /b 1)
 echo one> cmdtest\f1.txt
 echo two> cmdtest\f2.txt
-call "$bin\cp.cmd" cmdtest\f1.txt cmdtest\f1.copy.txt
+call "${shims}\cp.cmd" cmdtest\f1.txt cmdtest\f1.copy.txt
 if not exist cmdtest\f1.copy.txt (echo FAIL cp & exit /b 2)
-call "$bin\cp.cmd" -r cmdtest cmdclone
+call "${shims}\cp.cmd" -r cmdtest cmdclone
 if not exist cmdclone\deep (echo FAIL cp -r & exit /b 3)
-call "$bin\rm.cmd" -f cmdtest\f1.copy.txt
+call "${shims}\rm.cmd" -f cmdtest\f1.copy.txt
 if exist cmdtest\f1.copy.txt (echo FAIL rm & exit /b 4)
-call "$bin\rm.cmd" -rf cmdclone
+call "${shims}\rm.cmd" -rf cmdclone
 if exist cmdclone (echo FAIL rm -rf & exit /b 5)
-call "$bin\grep.cmd" two cmdtest\f2.txt >nul || (echo FAIL grep & exit /b 6)
-for /f %%i in ('"$bin\wc.cmd" -l cmdtest\f2.txt') do set LINES=%%i
+call "${shims}\grep.cmd" two cmdtest\f2.txt >nul || (echo FAIL grep & exit /b 6)
+for /f %%i in ('"${shims}\wc.cmd" -l cmdtest\f2.txt') do set LINES=%%i
 if not "%LINES%"=="1" (echo FAIL wc & exit /b 7)
-type cmdtest\f2.txt | "$bin\tail.cmd" -n 1 | findstr two >nul || (echo FAIL tail & exit /b 8)
-type cmdtest\f1.txt | "$bin\head.cmd" -n 1 | findstr one >nul || (echo FAIL head & exit /b 9)
-call "$bin\touch.cmd" cmdtest\touched.txt
+type cmdtest\f2.txt | "${shims}\tail.cmd" -n 1 | findstr two >nul || (echo FAIL tail & exit /b 8)
+type cmdtest\f1.txt | "${shims}\head.cmd" -n 1 | findstr one >nul || (echo FAIL head & exit /b 9)
+call "${shims}\touch.cmd" cmdtest\touched.txt
 if not exist cmdtest\touched.txt (echo FAIL touch & exit /b 10)
-call "$bin\touch.cmd" -c cmdtest\never.txt
+call "${shims}\touch.cmd" -c cmdtest\never.txt
 if exist cmdtest\never.txt (echo FAIL touch -c created a file & exit /b 10)
-type cmdtest\f1.txt | "$bin\grep.cmd" one >nul || (echo FAIL cat+grep & exit /b 11)
-call "$bin\cp.cmd" cmdtest/f1.txt cmdtest/fslash.txt
+type cmdtest\f1.txt | "${shims}\grep.cmd" one >nul || (echo FAIL cat+grep & exit /b 11)
+call "${shims}\cp.cmd" cmdtest/f1.txt cmdtest/fslash.txt
 if not exist cmdtest\fslash.txt (echo FAIL forward-slash cp & exit /b 12)
-call "$bin\rm.cmd" -f cmdtest/fslash.txt
+call "${shims}\rm.cmd" -f cmdtest/fslash.txt
 if exist cmdtest\fslash.txt (echo FAIL forward-slash rm & exit /b 12)
-call "$bin\sh.cmd" cmdheredoc.sh > shout.txt
+call "${shims}\sh.cmd" cmdheredoc.sh > shout.txt
 findstr heredoc-cmd-ok shout.txt >nul || (echo FAIL sh-heredoc & exit /b 13)
 rem the interactive doskey cd macro expands to exactly this for-loop, so test
 rem the generated command in batch form: resolver prints the previous dir,
@@ -479,7 +493,7 @@ if not "%OLDD%"=="$work\src" (echo FAIL cd-dash & exit /b 14)
 for /f "delims=" %%d in ('"$bin\winux.exe" cd -') do cd /d %%d
 if /i not "%CD%"=="$work\src" (echo FAIL cd-dash-move & exit /b 15)
 cd /d "$work"
-call "$bin\deactivate.cmd" >nul
+call "${shims}\deactivate.cmd" >nul
 if defined WINUX_ACTIVE (echo FAIL deactivate & exit /b 16)
 doskey /macros | findstr /ic:"mkdir" >nul && (echo FAIL deactivate-macros & exit /b 17)
 echo cmdtest-ok
@@ -496,7 +510,7 @@ exit /b 0
     # the console command-line editor, which is why piped/redirected input does
     # not trigger them). Verify the exact macro definitions here.
     $macros = @{}
-    $raw = (& cmd /c "call `"$bin\activate.cmd`" >nul && doskey /macros") | Out-String
+    $raw = (& cmd /c "call `"${shims}\activate.cmd`" >nul && doskey /macros") | Out-String
     foreach ($line in ($raw -split "`r?`n")) {
         $parts = $line -split '=', 2
         if ($parts.Count -eq 2) { $macros[$parts[0].Trim()] = $parts[1].Trim() }
