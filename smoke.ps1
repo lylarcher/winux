@@ -418,6 +418,61 @@ EOF
     Check 'cd (Set-Location) still works after deactivate' ((Get-Location).Path -eq (Join-Path $work 'src'))
     cd $work
 
+    # ------------------------------------------- coexist with a Python venv --
+    # Both winux and Python venv use the same venv-style session mechanism
+    # (save-original + prepend + LIFO restore) with DISJOINT markers and command
+    # names, so they stack in either order. Only run when python is available.
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        Write-Host '== venv coexistence section ==' -ForegroundColor Cyan
+        $venv = Join-Path ([System.IO.Path]::GetTempPath()) ("winux-smoke-venv-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $null = & python -m venv $venv 2>$null
+        try {
+            if (Test-Path (Join-Path $venv 'Scripts\activate.bat')) {
+                $venvName = Split-Path $venv -Leaf
+                # cmd: winux -> venv, LIFO deactivate restores everything exactly
+                $coexistScript = @"
+@echo off
+set "PRE=$bin;%PATH%"
+set "PATH=%PRE%"
+call winux-activate >nul
+call "$venv\Scripts\activate.bat" >nul
+if /i not "%PROMPT%"=="($venvName) (winux) `$P`$G" (echo FAIL-c1 & exit /b 1)
+call "$venv\Scripts\deactivate.bat" >nul
+call winux-deactivate >nul
+if /i not "%PROMPT%"=="`$P`$G" (echo FAIL-c2 & exit /b 2)
+if /i not "%PATH%"=="%PRE%" (echo FAIL-c3 & exit /b 3)
+echo coexist-ok
+"@
+                $coexistFile = Join-Path $work 'coexist.cmd'
+                Set-Content -Path $coexistFile -Value $coexistScript -Encoding ascii
+                $coexistOut = Text (& cmd /c "`"$coexistFile`" 2>&1")
+                Check 'cmd: winux + Python venv coexist (prompt stacks, LIFO restores)' `
+                    ($coexistOut -match 'coexist-ok') $coexistOut
+                # PowerShell: winux -> venv, both markers survive, LIFO restores
+                $coexistPs = Join-Path $work 'coexist.ps1'
+                $psBody = @"
+`$ErrorActionPreference='Stop'
+. '$bin\winux-activate.ps1' | Out-Null
+. '$venv\Scripts\Activate.ps1' | Out-Null
+if (`$env:WINUX_ACTIVE -ne '1') { Write-Output 'FAIL-ps1'; exit 1 }
+if (`$env:VIRTUAL_ENV -ne '$venv') { Write-Output 'FAIL-ps2'; exit 2 }
+deactivate
+if (`$env:VIRTUAL_ENV) { Write-Output 'FAIL-ps3'; exit 3 }
+. '$bin\winux-deactivate.ps1' | Out-Null
+if (`$env:WINUX_ACTIVE) { Write-Output 'FAIL-ps4'; exit 4 }
+if (((prompt).ToString().Trim()) -like '(winux) *') { Write-Output 'FAIL-ps5'; exit 5 }
+Write-Output 'ps-coexist-ok'
+"@
+                Set-Content -Path $coexistPs -Value $psBody -Encoding utf8
+                $psCoexistOut = Text (& powershell -NoProfile -ExecutionPolicy Bypass -File $coexistPs 2>&1)
+                Check 'PowerShell: winux + Python venv coexist (markers, LIFO restores)' `
+                    ($psCoexistOut -match 'ps-coexist-ok') $psCoexistOut
+            }
+        } finally {
+            Remove-Item -Recurse -Force $venv -ErrorAction SilentlyContinue
+        }
+    }
+
     # ----------------------------------------------------------------- network --
     if ($Network) {
         Write-Host '== network section (read-only) ==' -ForegroundColor Cyan

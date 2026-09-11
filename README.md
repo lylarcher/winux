@@ -106,7 +106,31 @@ install.ps1（install 只是把「全局 winux + 每窗口自动激活」自动�
    （原函数体保存为 `$global:winuxSavedPrompt`）——激活的窗口一眼可辨，
    deactivate 把两者都精确还原。
 
-名字解析优先级（这就是「遮蔽」而非「替换」的原理）：
+## 与 Python venv / conda 并存
+
+可以，**任意顺序激活都互不冲突**（已用真实 venv 在 cmd 与 PowerShell 里实测）。
+双方都是同一套「保存原值 + 前置 + 后进先出还原」的会话机制，而各自的标记与
+名字**完全不相交**：
+
+- **环境变量标记**：winux 用 `WINUX_*`，venv 用 `VIRTUAL_ENV`/`_OLD_VIRTUAL_*`，
+  互不覆盖。
+- **命令名**：venv 的 `activate`/`deactivate` 是裸名；winux 的辅助脚本全部
+  `winux-` 前缀（这正是当初设计的原因），所以 bin\ 进 PATH 永远不会跟 venv
+  抢 `deactivate` 这个名字。
+- **PATH**：各自只前置自己的目录（winux 前置 `bin\cmd`+`bin`，venv 前置
+  `venv\Scripts`），`python`/`pip` 仍解析到 venv，`cp`/`rm` 等仍解析到 winux。
+- **提示符**：两个前缀叠在一起，谁后激活谁在前——cmd 显示
+  `(winux) (.venv) ...` 或 `(.venv) (winux) ...`；PowerShell 显示
+  `(.venv) (winux) PS ...>`（venv 的绿色前缀是写控制台的前缀，winux 的是
+  返回字符串的前缀，两段拼成一行）。
+
+**唯一的规则：反激活按相反顺序**（后激活的先反激活）。只要按
+`winux-deactivate` 后再 `deactivate`（或反过来）的 LIFO 顺序，PATH、提示符、
+标记全部精确还原。乱序反激活（比如 venv 还开着就把 winux 关了）会留下一个
+**陈旧的提示符前缀**——这是「保存+前置」机制的固有行为，叠两个 venv 也一样，
+不是 winux 特有的问题。
+
+## 名字解析优先级（这就是「遮蔽」而非「替换」的原理）
 
 - PowerShell：`别名/函数 → cmdlet → PATH 外部命令`
 - cmd.exe：`内建命令 → PATH 外部命令`

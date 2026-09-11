@@ -3,6 +3,15 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-11 · 验证并固化「与 Python venv 并存」**：用真实 venv 在 cmd 与
+  PowerShell 里实测 winux 与 Python venv 任意顺序激活都互不冲突——双方都是
+  「保存原值+前置+后进先出还原」的会话机制，标记变量（WINUX_* vs
+  VIRTUAL_ENV/_OLD_VIRTUAL_*）与命令名（winux- 前缀 vs 裸 activate/deactivate）
+  完全不相交；提示符前缀叠加显示 `(winux) (.venv) ...`，LIFO 反激活精确还原。
+  唯一规则：反激活按相反顺序（乱序会残留陈旧前缀，与叠两层 venv 相同，属
+  venv 式机制的固有行为）。smoke 新增「venv 并存」段（python 可用时自动建
+  临时 venv 验证 cmd + PS 各一条，176 项全绿），README 增「与 Python venv /
+  conda 并存」一节。
 - **2026-09-11 · venv 式提示符前缀 `(winux)`**：激活后每个提示行前面出现
   `(winux) `（像 Python venv 的 `(.venv)`），一眼看出当前窗口已激活。cmd 把
   `(winux) ` 前置到 `PROMPT` 变量（原值存 `WINUX_OLD_PROMPT`，含未设置时回退
