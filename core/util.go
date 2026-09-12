@@ -215,8 +215,22 @@ func openInput(path string) (io.ReadCloser, error) {
 	return os.Open(path)
 }
 
+// stripBOM returns a reader that removes a single leading UTF-8 BOM (EF BB BF)
+// from the stream. Windows PowerShell 5.1 prepends a BOM to native-process
+// stdin when the console code page is 65001 (which winux itself switches the
+// console to), and BOM-marked UTF-8 files are common on Windows; without this,
+// the BOM would be glued to the first line and break line-based tools such as
+// `sort -n` and `uniq` (numeric parse / equality comparisons on line one).
+func stripBOM(r io.Reader) io.Reader {
+	br := bufio.NewReader(r)
+	if head, _ := br.Peek(3); len(head) == 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF {
+		br.Discard(3)
+	}
+	return br
+}
+
 func newScanner(r io.Reader) *bufio.Scanner {
-	sc := bufio.NewScanner(r)
+	sc := bufio.NewScanner(stripBOM(r))
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 	return sc
 }

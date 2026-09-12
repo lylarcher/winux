@@ -201,12 +201,24 @@ try {
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh')) {
+            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
     Check 'sudo explains the Windows elevation model' ((Text (& $winux sudo --help)) -match 'UAC|administrator')
     Check 'su explains that Windows has no root account' ((Text (& $winux su --help)) -match 'USER|USER')
+
+    # -------------------------------------- mysql / redis-cli / tcpdump ----
+    $code = Invoke-CmdLine "`"${winux}`" mysql -h 127.0.0.1 -P 1 -u nobody -e 'SELECT 1' >nul 2>&1"
+    Check 'mysql reports connection failure without a server' ($code -eq 1) "exit=$code"
+    $code = Invoke-CmdLine "`"${winux}`" redis-cli -h 127.0.0.1 -p 1 PING >nul 2>&1"
+    Check 'redis-cli reports connection failure without a server' ($code -eq 1) "exit=$code"
+    $onePcap = Join-Path $work 'one.pcap'
+    [IO.File]::WriteAllBytes($onePcap, [Convert]::FromBase64String('1MOyoQIABAAAAAAAAAAAAP//AAABAAAAAAAAAAAAAAAsAAAALAAAAAARIjNEVWZ3iJmquwgARQAAHAAAAABAEQAAwKgBBQgICAgSNAA1AA4AAGhp'))
+    Check 'tcpdump -r decodes a pcap without pktmon' `
+        ((Text (& $winux tcpdump -r $onePcap)) -match 'IP 192\.168\.1\.5\.4660 > 8\.8\.8\.8\.53: UDP')
+    $code = Invoke-CmdLine "`"${winux}`" tcpdump -r missing.pcap >nul 2>&1"
+    Check 'tcpdump -r fails cleanly for a missing file' ($code -eq 1) "exit=$code"
 
     # ------------------------------------------------------------- cd --------
     # `cd` is a PowerShell function (defined by winux-activate.ps1): winux resolves

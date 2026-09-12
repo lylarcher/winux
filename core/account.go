@@ -30,6 +30,12 @@ func init() {
 	addCmd("passwd", "change a local user's password", cmdPasswd)
 }
 
+// unsupportedError is returned by commands whose Windows back end does not
+// exist (e.g. pktmon off Windows).
+type unsupportedError struct{ tool string }
+
+func (e *unsupportedError) Error() string { return e.tool + " is not available on this platform" }
+
 // accountElevate re-runs this winux command elevated unless we already are.
 // Returns -1 when the re-run was launched (the caller must stop) or 0 when the
 // caller can proceed (we are already elevated).

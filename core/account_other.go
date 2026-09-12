@@ -33,7 +33,3 @@ func passwdChangeSelf(oldPass, newPass string) error { return &unsupportedError{
 func localUserInfo(name string) (*localUserStatus, error) {
 	return nil, &unsupportedError{"local user lookup"}
 }
-
-type unsupportedError struct{ tool string }
-
-func (e *unsupportedError) Error() string { return e.tool + " is not available on this platform" }

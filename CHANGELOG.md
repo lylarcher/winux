@@ -3,6 +3,35 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-12 · 新增 `tcpdump`、`mysql`、`redis-cli` 三个命令**：
+  - `tcpdump`：Windows 原生抓包，诚实映射到内置 **pktmon**（无 WinPcap/Npcap
+    依赖）。非提权时自动 **UAC 提权**跑 `pktmon start/stop + etl2pcap`，再纯 Go
+    解析 pcapng 输出 tcpdump 风格行（时间戳、IP:端口、TCP flags、`-v` 详情、
+    `-e` 链路头、`-A/-X` 载荷）；`-r FILE` **纯 Go 离线解析 pcap/pcapng**（无需
+    pktmon/提权），支持 Ethernet/回环/RAW、IPv4/IPv6/TCP/UDP/ICMP/ICMPv6/ARP；
+    过滤表达式 OR-of-AND 组（host/port/tcp/udp/icmp/arp/not/括号），pktmon 不
+    支持的原语（portrange/greater/less）诚实报错；`-D` 列接口、`-w` 写 pcap、
+    `-c` 计数停止。跨平台编译（linux/darwin 为存根，`-r` 仍可用）。
+  - `mysql`：**纯 Go MySQL 客户端**（无需安装客户端），完整握手：
+    `mysql_native_password` 与 `caching_sha2_password`（无 TLS 走 RSA 公钥全
+    认证）；`mysql>`/`    ->` 交互 REPL（`;`/`\g` 表格、`\G` 竖直、`\c` 取消、
+    `\q` 退出）、`-e` 非交互、`-B -N -t -r -E` 输出形状、`-D` 选库、`-p`/`-pSECRET`
+    密码、`-v` 详情、`-f` 出错继续。单测用进程内 mock MySQL 服务器验证
+    native/caching 认证、结果集、NULL/错误包、竖直/批量输出（全绿）。
+  - `redis-cli`：**纯 Go Redis 客户端**（无需安装客户端），RESP2 协议；交互
+    `host:port>` 提示、`-a` 认证、`-n` 选库、`-r/-i` 重复、`-x` stdin 作参数、
+    `-d` 分隔符、`--raw`；命令直发不设白名单。单测用 mock RESP 服务器验证
+    AUTH/PING/GET/SET/INCR/LRUNGE/MGET/错误包与交互（全绿）。
+  - **修复 PowerShell 5.1 管道 BOM 注入**（本次冒烟暴露的隐藏 bug）：winux 把
+    控制台切到 CP 65001 后，PS 5.1 会向原生进程 stdin 注入 **UTF-8 BOM**（首行
+    前多 `EF BB BF`）并用 CRLF 换行，导致 `sort -n` 首行数字解析失败、`uniq`
+    首行去重失效。现在共享行读取器（`newScanner`）与 `sh`/`mysql`/`redis-cli`
+    的 stdin 读取统一剥离首个 UTF-8 BOM，行为稳定且不误伤流中间的 BOM 数据。
+    新增 bom_test.go 回归测试（sort/uniq/grep/head/sh/仅首行剥离）。
+  - build.ps1 命令表 + smoke 新增断言（mysql/redis-cli 连不上服务器的错误路径、
+    `tcpdump -r` 合成 pcap 端到端解码、`-r` 缺文件失败），冒烟 192 项全绿；
+    README 命令表、tcpdump/mysql/redis-cli 说明节、目录结构同步更新。
+
 - **2026-09-11 · 新增 `passwd` 命令（仅本地用户）**：无参数 = 改当前用户密码
   （`NetUserChangePassword` API，旧密码校验 + 新密码两次隐藏输入，无需提权）；
   `passwd USER` = 改指定本地账户密码（UAC 提权跑 `net user`，输出经临时文件

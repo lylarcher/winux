@@ -206,6 +206,9 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `ip` | `addr/link/route/neigh` 的 `show`（含 `-4 -6 -br -o`）；iproute2 输出风格；一切改网子命令（`addr add`、`link set`、`route add`…）拒绝并提示原生替代 |
 | `nmcli` | `device status/show`、`connection show`、`general status/permissions/hostname`；改网子命令拒绝（Windows 无 NetworkManager，列表由适配器推导） |
 | `nmtui` | 执行即调出 Windows「网络连接」面板（`ncpa.cpl`，对应 控制面板\网络和 Internet\网络连接）；`nmtui hostname` 打开「重命名这台电脑」设置页；`edit/connect` 同面板（见「网络命令（只读策略）」末尾） |
+| `tcpdump` | `-i -c -w -r -n -N -s -e -v -A -X -D -p -q`；**抓包**映射到 Windows 原生 `pktmon`（自动 UAC 提权，`-r` 纯 Go 离线解析 pcap/pcapng，见「tcpdump 说明」） |
+| `mysql` | 纯 Go MySQL 客户端（**无需安装客户端**，仅 TCP）：`-h -P -u -p -D -e -B -N -t -r -E -v --connect-timeout -f`；交互 `mysql>`/`    ->` 提示、`;`/`\g`/`\G` 结束、`\q` 退出；支持 `mysql_native_password` 与 `caching_sha2_password`（含 RSA 公钥全认证） |
+| `redis-cli` | 纯 Go Redis 客户端（**无需安装客户端**）：`-h -p -a -n -r -i -d -x --raw -e --no-auth-warning --timeout`；交互 `host:port>` 提示，RESP2 回复格式化（`1) "val"`、`(integer)`、`(nil)`） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -481,6 +484,40 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
   `WINUX_NET_TESTS=1` 才运行（都是只读查询与「拒绝」用例）；
   冒烟测试的网络段落需 `smoke.ps1 -Network`。请先确认自己明白这些是只读操作再开。
 
+## tcpdump 说明
+
+`tcpdump` 在 Windows 上诚实映射到**原生 pktmon**（Windows Packet Monitor，Win10
+2004+ 自带，无需 WinPcap/Npcap）：
+
+- **抓包**（无 `-r`）：解析接口与过滤器后自动 **UAC 提权**，内部执行
+  `pktmon start --capture` → `pktmon stop` → `etl2pcap` 把 ETL 转成 pcapng，
+  再用纯 Go 解析输出 tcpdump 风格行（时间戳、IP、端口、TCP flags、载荷）。
+  非提权启动会弹 UAC（管理员 shell 可用时直接捕获，`-D`/`-i` 用 `pktmon list`）。
+- **离线解析**（`-r FILE`）：纯 Go 直接读 **pcap/pcapng**（无需 pktmon、无需
+  提权），Ethernet / 回环 / RAW 链路，IPv4/IPv6、TCP/UDP/ICMP/ICMPv6/ARP 解码；
+  `-e` 显示链路头，`-v` 显示 tos/ttl/id/flags 详情，`-A`/`-X` 打印载荷。
+- **过滤表达式**：`host`、`port`、`tcp`/`udp`/`icmp`/`arp`、`ip`/`ip6`、
+  `and`/`or`/`not` 与括号。pktmon 不支持的原语（`portrange`、`greater`、
+  `less` 等）**诚实报错**而非假装支持。
+- `-w FILE` 写 pcap（捕获时写 pcapng，`-w` 转成经典 pcap）；`-D` 列出接口；
+  `-n`/`-N` 恒为「不解析名字」（Windows 名字解析慢且不可靠，与 pktmon 一致）。
+- 提权后捕获会把临时 ETL/pcapng 放在 `%TEMP%` 并自动清理；Ctrl+C 可提前停止。
+
+## mysql / redis-cli 说明
+
+两者都是 **winux 内置的纯 Go 客户端**，只连 TCP，**不需要安装 MySQL/Redis
+客户端**，也不依赖系统库：
+
+- `mysql`：完整握手与认证（`mysql_native_password` 与 `caching_sha2_password`，
+  SHA-2 全认证走 RSA 公钥加密），`mysql>` / `    ->` 交互提示（`;`/`\g` 表格、
+  `\G` 竖直、`\c` 取消当前语句、`\q`/`exit`/`quit` 退出），`-e "SQL"` 非交互执行、
+  `-B -N -t -r -E` 控制输出形状，`-D` 选库，`-p`/`-pSECRET`/`--password=SECRET`
+  传密码（不带密码则交互隐藏输入）。无 `--ssl`：本机/内网默认明文 TCP，与
+  Windows 上不装客户端的最简用法一致。
+- `redis-cli`：RESP2 协议，`host:port>` 交互提示，`-a` 认证（NOAUTH 时警告）、
+  `-n` 选库、`-r N -i SEC` 重复执行、`-x` 把 stdin 作为最后一个参数、`-d` 分隔符、
+  `--raw` 原始输出。命令不做白名单——任何服务器支持的命令原样直发。
+
 ## 构建与测试
 
 ```powershell
@@ -493,10 +530,10 @@ go test ./...
 # 一键构建 + 垫片 + 激活脚本
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，141 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，192 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
-# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，共 154 项断言）
+# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，在 192 项之上增加）
 # ——需要你确认只读后使用
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 ```
@@ -530,6 +567,9 @@ winux/
 │  ├─ activate.go      winux activate/deactivate（父进程识别，winux- 前缀）
 │  ├─ shimgen.go       内嵌垫片解压（md5 增量）+ winux shims（+ shimdata/ 模板）
 │  ├─ term_windows.go  控制台原始模式、按键解码、终端尺寸（Windows）
+│  ├─ tcpdump.go       tcpdump（+ tcpdump_windows.go：pktmon 抓包；pcap/pcapng 解析）
+│  ├─ mysql.go         mysql 纯 Go 客户端（握手/RSA 认证/交互 REPL）
+│  ├─ redis.go         redis-cli 纯 Go 客户端（RESP2/交互 REPL）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）
 ├─ .gitignore       忽略构建产物（bin/、winux.exe 等）

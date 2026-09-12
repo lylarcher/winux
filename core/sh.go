@@ -845,7 +845,7 @@ type shLineReader func() (string, bool)
 
 func shReadAllLines(r io.Reader) []string {
 	data, _ := io.ReadAll(r)
-	raw := strings.Split(string(data), "\n")
+	raw := strings.Split(strings.TrimPrefix(string(data), "\ufeff"), "\n")
 	out := make([]string, 0, len(raw))
 	for _, l := range raw {
 		out = append(out, strings.TrimRight(l, "\r"))
