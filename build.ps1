@@ -37,7 +37,7 @@ $commands = @(
     'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sh', 'sort', 'ss',
     'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'useradd', 'userdel', 'usermod',
     'passwd', 'vi', 'vim', 'wc', 'which', 'whoami',
-    'mysql', 'redis-cli', 'tcpdump'
+    'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat'
 )
 
 $env:GOTELEMETRY = 'off'

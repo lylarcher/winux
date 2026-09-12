@@ -3,6 +3,22 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-12 · 新增 `nc`/`netcat` 命令**：Windows 没有原生 netcat，winux 内置
+  纯 Go 实现（零依赖）。连接模式 `nc HOST PORT`（stdin↔socket 双向转发，
+  stdin 结束后 TCP 半关闭、对端关闭即退出，同 GNU；`-u` UDP 模式 stdin 结束
+  即退出，同 OpenBSD）；监听模式 `nc -l [-p PORT] [HOST] PORT`（`-k` 持续
+  accept，`-u -l` 收 UDP 报文打印、stdin 行发回最近来源）；`-z` 只连不发
+  （端口扫描，成功 0/失败 1，`-v` 打印 GNU 风格 `Connection to … succeeded!`）；
+  `-w` 连接+空闲超时、`-q` EOF 后延迟关闭、`-i` 行间延迟、`-s`/`-p` 本地源
+  地址/端口（服务名端口如 `nc host http` 也支持）、`-n` 数字地址、`-4`/`-6`
+  地址族、Ctrl+C 退出 130。**`-e`/`-c`（连上后执行命令）在 Windows 上拒绝**
+  （RCE 入口 + 无可靠的原生绑定办法），提示改用 `winux sh -c` + 重定向。
+  stdin 入口同样剥离 PS 5.1 注入的 BOM（与其它命令一致）。单测
+  `test/nc_test.go` 用进程内 TCP/UDP 对端覆盖回显、listen、-z 扫描、-w 超时、
+  UDP 收发与各拒绝路径（全绿）；build.ps1 命令表 55→57，smoke 新增 6 项断言
+  （缺参数、-e 拒绝、-z 关闭端口、端到端回显），冒烟 198 项全绿；README
+  命令表、nc 说明节、目录结构同步更新。
+
 - **2026-09-12 · 新增 `tcpdump`、`mysql`、`redis-cli` 三个命令**：
   - `tcpdump`：Windows 原生抓包，诚实映射到内置 **pktmon**（无 WinPcap/Npcap
     依赖）。非提权时自动 **UAC 提权**跑 `pktmon start/stop + etl2pcap`，再纯 Go

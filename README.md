@@ -209,6 +209,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `tcpdump` | `-i -c -w -r -n -N -s -e -v -A -X -D -p -q`；**抓包**映射到 Windows 原生 `pktmon`（自动 UAC 提权，`-r` 纯 Go 离线解析 pcap/pcapng，见「tcpdump 说明」） |
 | `mysql` | 纯 Go MySQL 客户端（**无需安装客户端**，仅 TCP）：`-h -P -u -p -D -e -B -N -t -r -E -v --connect-timeout -f`；交互 `mysql>`/`    ->` 提示、`;`/`\g`/`\G` 结束、`\q` 退出；支持 `mysql_native_password` 与 `caching_sha2_password`（含 RSA 公钥全认证） |
 | `redis-cli` | 纯 Go Redis 客户端（**无需安装客户端**）：`-h -p -a -n -r -i -d -x --raw -e --no-auth-warning --timeout`；交互 `host:port>` 提示，RESP2 回复格式化（`1) "val"`、`(integer)`、`(nil)`） |
+| `nc`/`netcat` | 纯 Go TCP/UDP 客户端与监听器：`-l -u -p -s -w -q -n -v -z -k -4 -6 -i`；stdin↔socket 双向转发、`-z` 端口扫描、`-k` 持续监听；`-e/-c`（连上后执行命令）因安全原因在 Windows 上拒绝（见「nc 说明」） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -518,6 +519,26 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
   `-n` 选库、`-r N -i SEC` 重复执行、`-x` 把 stdin 作为最后一个参数、`-d` 分隔符、
   `--raw` 原始输出。命令不做白名单——任何服务器支持的命令原样直发。
 
+## nc 说明
+
+`nc`/`netcat` 是 winux 内置的纯 Go TCP/UDP 工具（Windows 没有原生 netcat），
+stdin 与对端双向转发：
+
+- **连接模式** `nc HOST PORT`：`echo hello | nc 127.0.0.1 8080`；stdin 结束后
+  对连接做半关闭（FIN），对端关闭连接即退出（GNU 语义，丢弃未发出的 stdin
+  余量）。`-u` 切 UDP（stdin 结束即退出，OpenBSD 语义）；`-s ADDR`/`-p PORT`
+  指定本地源地址/端口；端口可写服务名（`nc host http`）。
+- **监听模式** `nc -l [-p PORT] [HOST] PORT`：接受一个连接并转发；`-k` 持续
+  接受多个；`-u -l` 收 UDP 报文打印到 stdout，stdin 行发回最近来源。
+- **`-z` 端口扫描**：只建连不发数据，成功 0 / 失败 1；配合 `-v` 在 stderr
+  打印 `Connection to HOST PORT port [tcp/N] succeeded!`。
+- **`-w SECS`**：连接超时 + 无数据空闲超时；**`-q SECS`**：stdin 结束后延迟
+  关闭；**`-i SECS`**：发出的行之间间隔；**`-n`**：host 必须是数字地址；
+  **`-4`/`-6`**：限定地址族。Ctrl+C 中止并退出 130。
+- **`-e CMD`/`-c CMD`（连上后执行命令）在 Windows 上拒绝**（经典 RCE 入口，
+  且没有把 socket 绑到子进程 stdio 的原生可靠办法）——提示改用
+  `winux sh -c` + 重定向。
+
 ## 构建与测试
 
 ```powershell
@@ -530,7 +551,7 @@ go test ./...
 # 一键构建 + 垫片 + 激活脚本
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，192 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，198 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
 # 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，在 192 项之上增加）
@@ -570,6 +591,7 @@ winux/
 │  ├─ tcpdump.go       tcpdump（+ tcpdump_windows.go：pktmon 抓包；pcap/pcapng 解析）
 │  ├─ mysql.go         mysql 纯 Go 客户端（握手/RSA 认证/交互 REPL）
 │  ├─ redis.go         redis-cli 纯 Go 客户端（RESP2/交互 REPL）
+│  ├─ nc.go            nc / netcat（TCP/UDP 连接与监听，stdin 双向转发）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）
 ├─ .gitignore       忽略构建产物（bin/、winux.exe 等）

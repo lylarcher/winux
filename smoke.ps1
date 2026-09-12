@@ -201,7 +201,7 @@ try {
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump')) {
+            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -219,6 +219,39 @@ try {
         ((Text (& $winux tcpdump -r $onePcap)) -match 'IP 192\.168\.1\.5\.4660 > 8\.8\.8\.8\.53: UDP')
     $code = Invoke-CmdLine "`"${winux}`" tcpdump -r missing.pcap >nul 2>&1"
     Check 'tcpdump -r fails cleanly for a missing file' ($code -eq 1) "exit=$code"
+
+    # ------------------------------------------------------- nc / netcat ----
+    $code = Invoke-CmdLine "`"${winux}`" nc >nul 2>&1"
+    Check 'nc without a port fails' ($code -eq 1) "exit=$code"
+    $code = Invoke-CmdLine "`"${winux}`" nc -e cmd 127.0.0.1 80 >nul 2>&1"
+    Check 'nc refuses -e (execute) on Windows' ($code -eq 1) "exit=$code"
+    $closedPort = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $closedPort.Start()
+    $cp = ($closedPort.LocalEndpoint).Port
+    $closedPort.Stop()
+    $code = Invoke-CmdLine "`"${winux}`" nc -z -w 1 127.0.0.1 $cp >nul 2>&1"
+    Check 'nc -z reports a closed port' ($code -eq 1) "exit=$code"
+    $echoListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $echoListener.Start()
+    $ep = ($echoListener.LocalEndpoint).Port
+    # a runspace (same process) so the listener object is passed by reference
+    $echoPs = [powershell]::Create()
+    $null = $echoPs.AddScript({
+        param($listener)
+        try {
+            $c = $listener.AcceptTcpClient()
+            $s = $c.GetStream()
+            $buf = New-Object byte[] 1024
+            $n = $s.Read($buf, 0, 1024)
+            if ($n -gt 0) { $s.Write($buf, 0, $n); $s.Flush() }
+            $c.Close()
+        } finally { $listener.Stop() }
+    }).AddArgument($echoListener)
+    $echoHandle = $echoPs.BeginInvoke()
+    $ncOut = Text ('hello-smoke' | & $winux nc -w 3 127.0.0.1 $ep)
+    $null = $echoPs.EndInvoke($echoHandle)
+    $echoPs.Dispose()
+    Check 'nc relays stdin to a TCP peer and prints its reply' ($ncOut -eq 'hello-smoke') "out=$ncOut"
 
     # ------------------------------------------------------------- cd --------
     # `cd` is a PowerShell function (defined by winux-activate.ps1): winux resolves
