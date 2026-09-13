@@ -113,6 +113,21 @@ function global:prompt {
     "(winux) PS $loc$('>' * ($nestedPromptLevel + 1)) "
 }
 
+# `winux-deactivate` / `winux-activate` must be session functions too (the same
+# reason as `cd` above): the bare names would otherwise resolve to the cmd\
+# batch shims, which run in a CHILD cmd.exe and cannot touch this PowerShell
+# session's functions, aliases or prompt — the classic trap where
+# "winux-deactivate" prints "deactivated" but the (winux) prefix stays.
+# Functions shadow PATH commands in PowerShell. winux-deactivate.ps1 removes
+# both at teardown.
+$global:winuxBin = $winuxBin
+function global:winux-deactivate {
+    . (Join-Path $global:winuxBin 'winux-deactivate.ps1')
+}
+function global:winux-activate {
+    . (Join-Path $global:winuxBin 'winux-activate.ps1')
+}
+
 Write-Host "winux activated from $winuxBin" -ForegroundColor Green
 Write-Host 'cp rm mv mkdir touch grep cat cd less vi and more now resolve to winux.' -ForegroundColor Green
 Write-Host 'Run "winux --help" for the whole command list.' -ForegroundColor Green

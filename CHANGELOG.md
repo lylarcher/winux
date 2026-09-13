@@ -3,6 +3,22 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-12 · 修复 PowerShell 会话反激活不彻底**：`winux-deactivate` /
+  `winux-activate` 在 PowerShell 里原本解析到 cmd\ 的批处理垫片，只在子
+  cmd.exe 里还原 cmd 侧状态，导致「提示 deactivated 但 `(winux)` 提示符前缀
+  还在」。两处修复：
+  - **父 shell 识别穿透垫片**（activate.go）：`winux` 在 PS 里解析到
+    `cmd\winux.cmd`，winux.exe 的直接父进程是临时 cmd.exe——检测现在向上
+    再看一层，祖父是 PowerShell/pwsh 就仍按 PowerShell 处理，`winux deactivate`
+    会正确打印 `. '…\winux-deactivate.ps1'` 一行而非 cmd 的 call 行。
+  - **PowerShell 会话函数**（winux-activate.ps1）：像 `cd` 一样安装
+    `winux-deactivate`/`winux-activate` 两个全局函数（函数优先于 PATH 上的
+    .cmd），dot-source 真正的 .ps1 脚本完成全量还原（别名快照、PATH、
+    prompt 前缀、WINUX_* 标记）；winux-deactivate.ps1 退出时移除这两个函数。
+  smoke 新增 6 项断言（裸 `winux activate/deactivate` 经垫片仍打印 PS 一行、
+  两个名字解析为函数、deactivate 移除函数），冒烟 204 项全绿；README
+  用法/原理/目录结构同步更新。
+
 - **2026-09-12 · 新增 `nc`/`netcat` 命令**：Windows 没有原生 netcat，winux 内置
   纯 Go 实现（零依赖）。连接模式 `nc HOST PORT`（stdin↔socket 双向转发，
   stdin 结束后 TCP 半关闭、对端关闭即退出，同 GNU；`-u` UDP 模式 stdin 结束

@@ -38,29 +38,67 @@ var (
 )
 
 type processBasicInformation struct {
-	Reserved1       uintptr
-	PebBaseAddress  uintptr
-	Reserved2       [2]uintptr
-	UniqueProcessId uintptr
+	Reserved1                    uintptr
+	PebBaseAddress               uintptr
+	Reserved2                    [2]uintptr
+	UniqueProcessId              uintptr
 	InheritedFromUniqueProcessId uintptr
 }
 
-// parentShellName detects whether winux was launched from PowerShell or cmd
-// by reading the parent process image name (robust inside Windows Terminal,
-// where the console host differs from the shell).
+// parentShellName detects the real shell that launched winux. Because the
+// winux.cmd / winux-activate.cmd shims run winux.exe from a transient cmd.exe
+// (typing `winux ...` at a PowerShell prompt resolves to cmd\winux.cmd), we
+// walk up to the grandparent: a cmd.exe whose own parent is PowerShell is the
+// shim wrapper, not the user's shell.
 func parentShellName() string {
+	parent := parentPID(0) // 0 = current process
+	if parent == 0 {
+		return ""
+	}
+	switch name := processImageName(parent); {
+	case strings.HasPrefix(name, "powershell"), strings.HasPrefix(name, "pwsh"):
+		return "powershell"
+	case name == "cmd.exe":
+		gp := parentPID(parent)
+		if gp != 0 {
+			g := processImageName(gp)
+			if strings.HasPrefix(g, "powershell") || strings.HasPrefix(g, "pwsh") {
+				return "powershell"
+			}
+		}
+		return "cmd"
+	}
+	return ""
+}
+
+// parentPID returns the parent process id of pid (0 = the current process).
+func parentPID(pid uintptr) uintptr {
+	h := ^uintptr(0) // NtQueryInformationProcess pseudo-handle for self
+	if pid != 0 {
+		ph, _, _ := procOpenProcess.Call(0x1000, 0, pid) // PROCESS_QUERY_LIMITED_INFORMATION
+		if ph == 0 {
+			return 0
+		}
+		defer procCloseHandle.Call(ph)
+		h = ph
+	}
 	var pbi processBasicInformation
 	st, _, _ := procNtQueryInformationProcess.Call(
-		^uintptr(0), // current process pseudo handle
-		0,           // ProcessBasicInformation
+		h,
+		0, // ProcessBasicInformation
 		uintptr(unsafe.Pointer(&pbi)),
 		uintptr(unsafe.Sizeof(pbi)),
 		0,
 	)
-	if st != 0 || pbi.InheritedFromUniqueProcessId == 0 {
-		return ""
+	if st != 0 {
+		return 0
 	}
-	h, _, _ := procOpenProcess.Call(0x1000, 0, pbi.InheritedFromUniqueProcessId) // PROCESS_QUERY_LIMITED_INFORMATION
+	return pbi.InheritedFromUniqueProcessId
+}
+
+// processImageName returns the lower-cased image base name of pid.
+func processImageName(pid uintptr) string {
+	h, _, _ := procOpenProcess.Call(0x1000, 0, pid) // PROCESS_QUERY_LIMITED_INFORMATION
 	if h == 0 {
 		return ""
 	}
@@ -71,14 +109,7 @@ func parentShellName() string {
 	if r == 0 {
 		return ""
 	}
-	name := strings.ToLower(filepath.Base(syscall.UTF16ToString(buf[:n])))
-	switch {
-	case strings.HasPrefix(name, "powershell"), strings.HasPrefix(name, "pwsh"):
-		return "powershell"
-	case name == "cmd.exe":
-		return "cmd"
-	}
-	return ""
+	return strings.ToLower(filepath.Base(syscall.UTF16ToString(buf[:n])))
 }
 
 func detectShell() string {

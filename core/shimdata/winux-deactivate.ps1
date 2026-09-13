@@ -35,6 +35,10 @@ if ($env:WINUX_OLD_PATH) {
 }
 
 Remove-Item Env:WINUX_ACTIVE, Env:WINUX_PREVDIR -ErrorAction SilentlyContinue
-Remove-Variable -Scope Global -Name winuxExe, winuxPrevDir -ErrorAction SilentlyContinue
+Remove-Variable -Scope Global -Name winuxExe, winuxPrevDir, winuxBin -ErrorAction SilentlyContinue
+
+# drop the session functions that winux-activate.ps1 installed (they shadow
+# the cmd\ batch shims so a PowerShell user can type winux-deactivate directly)
+Remove-Item Function:winux-deactivate, Function:winux-activate -ErrorAction SilentlyContinue
 
 Write-Host 'winux deactivated: the native PowerShell commands (ls/cat/cd/ps/...) are restored.' -ForegroundColor Yellow

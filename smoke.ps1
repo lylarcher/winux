@@ -82,6 +82,18 @@ try {
     $deLine = Text (& $winux deactivate)
     Check 'winux deactivate prints the deactivation one-liner' ($deLine -eq ". '$bin\winux-deactivate.ps1'") $deLine
 
+    # The bare `winux ...` and `winux-deactivate` names resolve through the
+    # cmd\ shims: the parent-shell walk must see PowerShell behind the shim
+    # cmd.exe, and the session functions must shadow the batch deactivator.
+    $deBareLine = Text (& winux deactivate)
+    Check 'bare winux deactivate (via the cmd shim) still targets PowerShell' ($deBareLine -eq ". '$bin\winux-deactivate.ps1'") $deBareLine
+    $actBareLine = Text (& winux activate)
+    Check 'bare winux activate (via the cmd shim) still targets PowerShell' ($actBareLine -eq ". '$bin\winux-activate.ps1'") $actBareLine
+    Check 'winux-deactivate resolves to a session function, not the batch shim' `
+        ((Get-Command winux-deactivate -ErrorAction SilentlyContinue).CommandType -eq 'Function') (Get-Command winux-deactivate -ErrorAction SilentlyContinue).Source
+    Check 'winux-activate resolves to a session function, not the batch shim' `
+        ((Get-Command winux-activate -ErrorAction SilentlyContinue).CommandType -eq 'Function') (Get-Command winux-activate -ErrorAction SilentlyContinue).Source
+
     # ---------------------------------------------------------- fixtures ----
     mkdir -p src/sub | Out-Null
     Set-Content -Path src/a.txt -Value 'alpha'      -NoNewline
@@ -482,6 +494,10 @@ EOF
 
     . (Join-Path $bin 'winux-deactivate.ps1')
     Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
+    Check 'deactivate removed the winux-deactivate session function' `
+        (-not (Get-Command winux-deactivate -ErrorAction SilentlyContinue))
+    Check 'deactivate removed the winux-activate session function' `
+        (-not (Get-Command winux-activate -ErrorAction SilentlyContinue))
     Check 'deactivate restored the original PowerShell prompt' `
         ((Text (& prompt)) -notlike '(winux) *') (Text (& prompt))
     Check 'deactivate cleared the activation markers' ((($null -eq $env:WINUX_ACTIVE) -and ($null -eq $env:WINUX_STATE)) -and ($null -eq $env:WINUX_OLD_PATH))
