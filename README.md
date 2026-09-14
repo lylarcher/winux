@@ -224,6 +224,10 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `mongodb` | 纯 Go MongoDB 客户端（**无需安装 mongosh/mongo**，直接 wire 协议）：`-h --port -u --password --authenticationDatabase -d --eval --tls --timeout`；手写 BSON + OP_MSG + SCRAM-SHA-256；`use/show dbs/show collections` 与 `db.<col>.<method>({...})` 简式（find/findOne/insertOne/insertMany/updateOne/updateMany/deleteOne/deleteMany/aggregate/countDocuments/distinct/…，支持 `ObjectId()`、无引号键），也接受原样 JSON 命令（见「mongodb 说明」） |
 | `psql` | 纯 Go PostgreSQL 客户端（**无需安装 psql/PostgreSQL**，wire v3 协议）：`-h --port -U -d -W -w -c -f -t -A -q --ssl --timeout`；认证支持明文/MD5/SCRAM-SHA-256（PGPASSWORD 或 `-W` 隐藏输入）；psql 风格对齐表格，`-t` 只元组、`-A` 无对齐；REPL 支持 `\q \l \dt \d NAME \c DB \?`（见「psql 说明」） |
 | `sqlite` | SQLite 客户端（**无需安装 sqlite3 CLI**，内嵌纯 Go 驱动 modernc.org/sqlite）：`sqlite [OPTIONS] [DBFILE] [SQL]`，缺省 DBFILE 用 `:memory:`；`-r/--readonly`、`-json/-line/-list/--column` 输出、`--separator --nullvalue --cmd -v`；REPL 点命令 `.tables .schema .databases .indexes .dump .mode .headers .read`（见「sqlite 说明」） |
+| `systemctl` | systemd 风格服务管理（纯 Go，不装 OpenSSH 之外任何组件）：`start/stop/restart/enable/disable/status/is-active/is-enabled/list-units/list-unit-files/cat/journalctl/mask/unmask/daemon-reload`；后端为 Windows 服务（svc 或内置 svchost）与计划任务（schtasks），单元文件 *.service 放 `%ProgramData%\systemctl\units`（见「systemctl 说明」） |
+| `svchost` | 内置 Windows 服务宿主（替代外部 wrapper）：`svchost -unit <unit.service> [-debug]`；由 systemctl 的 wrapped 后端自动调用，托管 ExecStart 子进程并转发输出到 `<unit>.wrapper.log` |
+| `sshd` | 纯 Go SSH 服务端（**无需安装 Windows OpenSSH**）：默认监听 **1022** 端口；`--auth local` 用本地 Windows 账号密码校验（LogonUserW），`--auth any` 仅测试用；连入后是 winux sh 环境（exec 请求跑 `winux sh -c`、shell 请求挂 ConPTY 伪控制台）；`sshd --install` 注册并启动 **winux-sshd** 服务（systemctl 可管理），host key 自动生成于 `%ProgramData%\winux\sshd_host_ed25519`（见「sshd / wssh 说明」） |
+| `wssh` | 纯 Go SSH 客户端（**无需安装 OpenSSH**）：`wssh [user@]host[:port] [command]`，默认端口 **1022**；密码认证（`-p` 或交互提示），可连 winux sshd 或任意 OpenSSH 服务器；交互模式请求远端 pty（ConPTY）并转发本机终端（见「sshd / wssh 说明」） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -635,6 +639,55 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
   说明）；INSERT/UPDATE/DELETE/REPLACE 显示
   `Query OK, N rows affected`，DDL 静默执行。
 
+## systemctl 说明
+
+`systemctl` 用 Windows 原生机制实现 systemd 风格的单元管理，**不引入任何
+外部组件**（不需要安装 Cygwin/systemd）。单元文件是 INI 格式的
+`*.service`，放在 `%ProgramData%\systemctl\units`（可用环境变量
+`SYSTEMCTL_UNIT_PATH` 追加目录）。
+
+- **单元解析**：`[Unit] Description=`、`[Service] Type=simple|wrapped|native`
+  （默认 wrapped）、`ExecStart=`（引号感知拆分，首个 token 为程序）、
+  `WorkingDirectory=`、`Restart=on-failure|always|no`、`KillTimeoutSec=`、
+  `Environment=A=1 B="two words"`、`[Install] WantedBy=`。
+- **后端映射**：`wrapped` = 内置 `svchost` 服务宿主（托管 ExecStart 子进程，
+  输出转发到 `<unit>.wrapper.log`，`journalctl -u` 可读）；`native` = 服务
+  直接以 ExecStart 的命令行注册；`Type=simple` 且 ExecStart 为空 = 计划任务
+  （schtasks，支持 login/loginsvc 触发）；纯 `[Install]` 单元 = 计划任务
+  （login 登录触发）。状态保存在 `%ProgramData%\systemctl\state`。
+- **常用命令**：`systemctl status NAME`（运行/已安装/启用状态+详情）、
+  `start/stop/restart NAME`、`enable/disable NAME`（开机启动）、
+  `is-active/is-enabled NAME`（供脚本判断，退出码 3/1）、`cat NAME`（打印
+  单元）、`list-units`/`list-unit-files`、`mask/unmask NAME`、
+  `journalctl -u NAME [-n N] [-f] [-r] [--since TIME]`、`daemon-reload`。
+  变更类命令需要管理员权限（会先检查令牌并明确提示）。
+- **示例**：把 winux sshd 装成开机自启服务
+  `winux sshd --install`（等价于一条 systemctl 单元 + enable）。
+
+## sshd / wssh 说明
+
+winux 的 SSH 服务端与客户端都是**纯 Go**（golang.org/x/crypto/ssh），
+Windows 上**不需要安装 OpenSSH 组件**。
+
+- **服务端 `sshd`**：默认监听 `0.0.0.0:1022`（避开 22 与 OpenSSH 冲突）。
+  认证默认 `--auth local`——用 Windows 本地账号密码校验（LogonUserW，
+  仅限双方机器上的本地用户）；`--auth any` 接受任意密码（仅测试/内网）。
+  连入后就是 winux 环境：SSH exec 请求跑 `winux sh -c <cmd>`（管道、重定向、
+  `&&` 全可用），shell 请求挂一个 ConPTY 伪控制台跑 `winux sh`（交互 REPL，
+  支持终端尺寸变更）。host key（ed25519）首次运行自动生成在
+  `%ProgramData%\winux\sshd_host_ed25519`（不可写时回退
+  `%LOCALAPPDATA%\winux`）。
+- **服务安装**：`winux sshd --install` 以管理员注册并启动 **winux-sshd**
+  服务（`--uninstall` 移除），之后可用
+  `winux systemctl status winux-sshd` / `restart` / `journalctl -u winux-sshd`
+  管理。前台跑 `winux sshd` 即可（`--port N`、`--listen HOST`、`--log FILE`）。
+- **客户端 `wssh`**：`winux wssh [-p 密码] [-P 端口] [-l 用户] user@host[:port] [command]`
+  ——不给命令进交互 shell（请求远端 pty，本机进入 raw 模式，窗口变化自动
+  推送 `window-change`）；给命令则执行并透传退出码。默认端口 1022；
+  连 OpenSSH 服务器用 `-P 22`。两台的 winux 互相连接：本机
+  `winux sshd`（或装成服务），另一台 `winux wssh 对方IP`（激活环境后直接
+  `wssh`）。
+
 ## 构建与测试
 
 ```powershell
@@ -648,7 +701,7 @@ go test ./...
 # 一键构建 + 垫片 + 激活脚本（-Version x.y.z 正式版 / -Version dev 用 git commit id）
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，218 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，224 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
 # 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ifconfig，在常规项之上增加）
@@ -659,15 +712,17 @@ powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 也可以 `go build -o bin\winux.exe .` 手动构建。`build.ps1 -RealExes` 可改为生成
 每个命令的真实 exe（硬链接，省空间），`-CopyInsteadOfHardLinks` 用复制。
 
-**依赖说明**：winux 的唯一第三方 Go 模块是 `modernc.org/sqlite`（`sqlite`
+**依赖说明**：winux 的第三方 Go 模块共三个：`modernc.org/sqlite`（`sqlite`
 命令用，纯 Go 无 CGO）；它要求 `go 1.25` 以上，因此 `go.mod` 的 `go`
 指令已从 1.21 升到 1.25。其余全部命令（含 mongodb/psql/clickhouse/mysql/
 redis-cli/nc/tcpdump 等协议客户端）都只依赖 Go 标准库。
 
-**版本号**由 `build.ps1` 构建时经 `-ldflags -X` 注入：取本地 git 仓库
-`HEAD` 的**后 8 位 commit id**（`git rev-parse --short=8 HEAD`），同时注入
-**构建时间**（`yyyy-MM-ddTHH:mm:ss`）；机器上没有 git 或不在 git 仓库内则
-回退为 `1.0.0`（仅版本，构建时间仍注入）。因此：
+**版本号**由 `build.ps1` 构建时经 `-ldflags -X` 注入。**默认（不带
+`-Version`）就是开发版**：取本地 git 仓库 `HEAD` 的后 8 位 commit id
+（`git rev-parse --short=8 HEAD`）作为版本号，同时注入构建时间
+（`yyyy-MM-ddTHH:mm:ss`）；机器上没有 git 或不在 git 仓库内则回退为
+`1.0.0`。`-Version x.y.z` 注入正式发布版本（仅该模式为 release）；
+`-Version dev/development` 与默认相同。因此：
 
 ```
 $ winux --version

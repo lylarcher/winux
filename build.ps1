@@ -18,10 +18,11 @@
 #>
 [CmdletBinding()]
 param(
-    # Version to stamp into core.Version. Default (omitted) = 1.0.0.
+    # Version to stamp into core.Version. Default (omitted) = dev build.
     #   -Version 2.1.0   a formal release version (x.y.z)
     #   -Version dev     development/test build: the 8-char git commit id
-    #                    (falls back to 1.0.0 without a local git repository)
+    #                    (the default; falls back to 1.0.0 without a local git
+    #                    repository)
     [string]$Version,
     # Create real cp.exe/rm.exe/... copies (or hard links) instead of .cmd shims.
     [switch]$RealExes,
@@ -43,7 +44,8 @@ $commands = @(
     'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'uptime', 'useradd', 'userdel', 'usermod',
     'passwd', 'vi', 'vim', 'wc', 'which', 'whoami',
     'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse',
-    'mongodb', 'psql', 'sqlite'
+    'mongodb', 'psql', 'sqlite',
+    'systemctl', 'svchost', 'sshd', 'wssh'
 )
 
 $env:GOTELEMETRY = 'off'
@@ -61,16 +63,16 @@ Write-Host 'Building bin\winux.exe ...' -ForegroundColor Cyan
 
 # Stamp the version with the 8-char git commit id (fallback 1.0.0 when there is
 # no local git repository) and the build timestamp into core.Version/BuildTime.
-# Resolve the version to stamp: a formal release version when -Version is
-# given (x.y.z), 'dev' stamps the 8-char git commit id, and the default
-# (no -Version) is the stable 1.0.0. The commit id is only ever a development
-# build marker.
+# Resolve the version to stamp: the default (no -Version) is the dev build
+# stamped with the 8-char git commit id; -Version x.y.z stamps a formal
+# release version; -Version dev is the same as the default. The commit id is
+# only ever a development build marker.
 $commit = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
     $rev = & git rev-parse --short=8 HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $rev) { $commit = $rev.Trim() }
 }
-$stampVersion = '1.0.0'
+$stampVersion = if ($commit) { $commit } else { '1.0.0' }
 if ($Version) {
     if ($Version -ieq 'dev' -or $Version -ieq 'development') {
         $stampVersion = if ($commit) { $commit } else { '1.0.0' }
@@ -127,7 +129,7 @@ if ($RealExes) {
 
 
 $exeSize = (Get-Item (Join-Path $bin 'winux.exe')).Length
-$mode = if ($Version -and $Version -ne $stampVersion) { 'dev (git commit)' } else { 'release' }
+$mode = if ($stampVersion -match '^\d+\.\d+(\.\d+)*$') { 'release' } else { 'dev (git commit)' }
 Write-Host ''
 Write-Host ("Build complete: {0} commands, winux.exe {1:N0} bytes (version {2} [{3}], built {4})" -f $commands.Count, $exeSize, $stampVersion, $mode, $buildTime) -ForegroundColor Green
 Write-Host ''

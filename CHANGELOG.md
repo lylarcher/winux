@@ -3,6 +3,37 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 新增 `systemctl`/`svchost`/`sshd`/`wssh`，`build.ps1` 默认 dev**：
+  - **`systemctl`**：systemd 风格服务管理器（纯 Go，参考 systemctl-win 工程
+    的语义）：单元解析（INI + 引号感知 ExecStart）、四类后端——内置
+    `svchost` 服务宿主（wrapped）、原生命令行服务（native）、计划任务
+    （schtasks，login/loginsvc/login 触发）、掩码；`start/stop/restart/
+    enable/disable/status/is-active/is-enabled/cat/list-units/
+    list-unit-files/journalctl/mask/unmask/daemon-reload`；状态存
+    `%ProgramData%\systemctl\state`，`journalctl -u` 读 wrapper.log。
+  - **`svchost`**：内置 Windows 服务宿主（`x/sys/windows/svc`），替代
+    systemctl-win 的 dsh-svchost.exe；解析 *.service 单元、托管 ExecStart
+    子进程、taskkill /t 停进程树、GBK/OEM→UTF8 日志解码。
+  - **`sshd`**：纯 Go SSH 服务端（`golang.org/x/crypto/ssh`，Windows **无需
+    安装 OpenSSH**）：默认 `0.0.0.0:1022`；`--auth local` 用 LogonUserW 校验
+    本地账号密码，`--auth any` 测试用；exec 请求跑 `winux sh -c`、shell 请求
+    挂 **ConPTY 伪控制台**跑 `winux sh`（syscall 手写 ConPTY：CreatePipe→
+    CreatePseudoConsole→属性列表→CreateProcess；修复了 HRESULT 判断、COORD
+    按值传递、pty-req/window-change 按 RFC 4254 解析等调试坑）；host key
+    ed25519 自动生成；`sshd --install/--uninstall` 注册 **winux-sshd** 服务。
+  - **`wssh`**：纯 Go SSH 客户端（无需 OpenSSH）：`wssh [user@]host[:port]
+    [command]`，默认端口 1022，密码认证（`-p` 或交互提示），交互模式请求
+    pty 并转发本机终端（raw 模式 + 窗口变化推送）。
+  - **`sh -i`**：`sh` 新增 `-i/--interactive`（伪控制台里非 tty 也进 REPL）。
+  - **`build.ps1` 默认 dev**：不带 `-Version` 即用 git commit id 作开发版
+    （无仓库回退 1.0.0），`-Version x.y.z` 才注入正式版。
+  - 依赖：新增 `golang.org/x/crypto v0.50.0`、`golang.org/x/sys v0.40.0`
+    （均与 Go 1.25 兼容并 pin 住）；命令表 63→67；新增
+    core/ssh_conpty_test.go（ConPTY 回环）、test/ssh_test.go（真实 sshd 进程
+    + x/crypto 客户端 + wssh CLI 的 exec/管道/退出码/ConPTY shell/连接失败）、
+    test/systemctl_test.go（解析、cat/list/status 只读路径 + 非管理员拒绝）；
+    smoke 新增 6 项（help 循环 +4、systemctl status 未知单元、wssh 连接失败）；
+    README 命令表/两个说明节/依赖/版本文档同步更新。
 - **2026-09-14 · 新增 `mongodb`/`psql`/`sqlite` 客户端与 `build.ps1 -Version`**：
   - **`mongodb`**：纯 Go 客户端（**无需 mongosh/mongo**），直接 wire
     协议——手写 BSON 编解码、OP_MSG、SCRAM-SHA-256（含服务端签名校验）。

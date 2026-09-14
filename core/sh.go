@@ -812,6 +812,7 @@ func waitShExit(cmd *exec.Cmd) int {
 func cmdSh(args []string) int {
 	f := NewFlags(
 		&Flag{Name: "command", Short: 'c', Long: "command", HasArg: true, ArgName: "SCRIPT", Help: "run the commands in SCRIPT"},
+		&Flag{Name: "interactive", Short: 'i', Long: "interactive", Help: "force the interactive REPL even without a console"},
 	)
 	if !parseOrDie("sh", f, args) {
 		return 2
@@ -832,7 +833,7 @@ func cmdSh(args []string) int {
 		}
 		return shRunSource(strings.NewReader(string(b)), ctx, false)
 	}
-	if !isTerminal(os.Stdin) {
+	if !isTerminal(os.Stdin) && f.Count("interactive") == 0 {
 		data, _ := io.ReadAll(os.Stdin)
 		return shRunSource(strings.NewReader(string(data)), ctx, false)
 	}

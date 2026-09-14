@@ -224,7 +224,7 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)$') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite')) {
+            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -255,6 +255,12 @@ try {
     $sqOut = Text (& $winux sqlite :memory: "CREATE TABLE t(a); INSERT INTO t VALUES (9); SELECT a FROM t;")
     Check 'sqlite creates, inserts and selects in-memory' ($sqOut -match '9') $sqOut
 
+
+    # ----------------------------------------- systemctl / sshd / wssh ------
+    $code = Invoke-CmdLine "`"${winux}`" systemctl status no-such-unit-xyz >nul 2>&1"
+    Check 'systemctl status of an unknown unit fails' ($code -eq 4) "exit=$code"
+    $code = Invoke-CmdLine "`"${winux}`" wssh -p x nobody@127.0.0.1:1 --timeout 2 echo hi >nul 2>&1"
+    Check 'wssh reports a connection failure without a server' ($code -eq 1) "exit=$code"
     # ------------------------------------------------------- nc / netcat ----
     $code = Invoke-CmdLine "`"${winux}`" nc >nul 2>&1"
     Check 'nc without a port fails' ($code -eq 1) "exit=$code"
