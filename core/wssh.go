@@ -128,25 +128,30 @@ func cmdWssh(args []string) int {
 		}
 	}
 
-	if !passwordSet {
-		if isTerminal(os.Stdin) {
-			line, _ := readPassword(fmt.Sprintf("%s@%s's password: ", user, target))
-			fmt.Fprintln(os.Stderr)
-			password = line
-			passwordSet = true
-		} else {
-			fmt.Fprintln(os.Stderr, "wssh: no password given (use -p/--password or run interactively)")
-			return 1
-		}
-	}
-
 	addr := netJoinHostPort(target, port)
 	if verbose {
 		fmt.Fprintf(os.Stderr, "wssh: connecting to %s as %s\n", addr, user)
 	}
-	conn, err := dialSSH(addr, user, password, timeout, verbose)
+	conn, err := dialSSH(addr, user, timeout, verbose, func() (string, error) {
+		if passwordSet {
+			return password, nil
+		}
+		if !isTerminal(os.Stdin) {
+			return "", fmt.Errorf("no password given (use -p/--password or run interactively)")
+		}
+		line, _ := readPassword(fmt.Sprintf("%s@%s's password: ", user, target))
+		fmt.Fprintln(os.Stderr)
+		return line, nil
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wssh: %v\n", err)
+		msg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(msg, "refused"):
+			fmt.Fprintln(os.Stderr, "wssh: the target refused the connection — is sshd running on that port, and is the port reachable (firewall/security group)?")
+		case strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"):
+			fmt.Fprintln(os.Stderr, "wssh: connection timed out — check the host/port; a firewall may be silently dropping packets")
+		}
 		return 1
 	}
 	defer conn.Close()
@@ -174,15 +179,7 @@ func netJoinHostPort(host string, port int) string {
 	return host + ":" + strconv.Itoa(port)
 }
 
-func dialSSH(addr, user, password string, timeout time.Duration, verbose bool) (*ssh.Client, error) {
-	conf := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-			ssh.KeyboardInteractive(sshKbdInteractive(password)),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
+func dialSSH(addr, user string, timeout time.Duration, verbose bool, askPassword func() (string, error)) (*ssh.Client, error) {
 	// Dial the TCP socket with the timeout, then keep that same deadline on the
 	// connection for the whole handshake (version exchange, algorithm
 	// negotiation AND authentication). x/crypto's ClientConfig.Timeout only
@@ -201,6 +198,29 @@ func dialSSH(addr, user, password string, timeout time.Duration, verbose bool) (
 	if verbose {
 		fmt.Fprintf(os.Stderr, "wssh: tcp connected to %s, starting ssh handshake (deadline %s)\n", addr, timeout)
 	}
+	// Ask for the password only after the TCP connection is up, so an
+	// unreachable server fails immediately instead of first prompting.
+	password := ""
+	if askPassword != nil {
+		p, err := askPassword()
+		if err != nil {
+			netConn.Close()
+			return nil, err
+		}
+		password = p
+	}
+	var gotKey ssh.PublicKey
+	conf := &ssh.ClientConfig{
+		User: user,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+			ssh.KeyboardInteractive(sshKbdInteractive(password)),
+		},
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			gotKey = key
+			return nil
+		},
+	}
 	c, chans, reqs, err := ssh.NewClientConn(netConn, addr, conf)
 	if err != nil {
 		netConn.Close()
@@ -210,6 +230,9 @@ func dialSSH(addr, user, password string, timeout time.Duration, verbose bool) (
 		netConn.SetDeadline(time.Time{}) // clear the handshake deadline
 	}
 	if verbose {
+		if gotKey != nil {
+			fmt.Fprintf(os.Stderr, "wssh: server host key: %s (%s)\n", ssh.FingerprintSHA256(gotKey), gotKey.Type())
+		}
 		fmt.Fprintf(os.Stderr, "wssh: authenticated as %s\n", user)
 	}
 	return ssh.NewClient(c, chans, reqs), nil
