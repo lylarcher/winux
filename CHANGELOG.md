@@ -3,6 +3,16 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · sudo 提权输出回显（sudo systemctl 不再静默失败）**：
+  - 根因：`Start-Process -Verb RunAs` 启动的提权进程运行在**独立控制台**，
+    其 stdout/stderr 用户不可见；加上此前"内部命令失败静默返回退出码"，
+    `sudo systemctl start winux-sshd` 失败时没有任何输出，用户无法知道
+    发生了什么。
+  - 修复：非交互提权（sudo <cmd>）改为通过隐藏的 `sudo-helper` 命令执行
+    ——提权进程把 stdout/stderr 写入临时文件，父进程在 PowerShell 结束后
+    读回并**回显到用户终端**；失败退出码照常透传，UAC 被拒/异常时打印
+    "elevation failed" 原因。`sudo -i`（交互管理员 shell）保持原行为。
+  - `sudo-helper` 不注册为命令（不进 --help/命令表）。
 - **2026-09-14 · 修复 wssh 连接 Linux OpenSSH 卡住；systemctl 内置 sshd 单元；`--version` 显示 exe 路径**：
   - **wssh 握手超时**：`ClientConfig.Timeout` 只覆盖 TCP dial，握手/认证阶段
     无超时——服务器握手不响应（丢包、慢 DNS/PAM）会无限挂起。改为手动

@@ -700,32 +700,60 @@ func cmdSudo(args []string) int {
 // elevateAndWait re-runs the given winux command line (or cmd.exe) through
 // PowerShell's Start-Process -Verb RunAs, which triggers the UAC prompt, and
 // waits for the elevated process to finish.
+//
+// The elevated process runs in its own console, so its output is invisible by
+// default. For command lines (shell=false) we re-run them through the hidden
+// "sudo-helper" command, which captures stdout/stderr to temp files; we then
+// replay those files here, so `sudo systemctl start ...` shows the real
+// result instead of failing silently.
 func elevateAndWait(label string, args []string, shell bool) int {
-	file := os.Getenv("COMSPEC")
-	if file == "" {
-		file = "cmd.exe"
+	comspec := os.Getenv("COMSPEC")
+	if comspec == "" {
+		comspec = "cmd.exe"
 	}
-	var argList []string
-	if !shell {
+	var file string
+	if shell {
+		file = comspec
+	} else {
 		self, err := os.Executable()
 		if err != nil {
 			warn(label, "cannot locate the running executable: %v", err)
 			return 1
 		}
-		file, argList = self, args
+		file = self
 	}
-	ps := buildElevateScript(file, argList)
+	outPath, errPath := "", ""
+	elevateArgs := args
+	if !shell {
+		stamp := time.Now().UnixNano()
+		outPath = filepath.Join(os.TempDir(), fmt.Sprintf("winux-elev-%d.out", stamp))
+		errPath = filepath.Join(os.TempDir(), fmt.Sprintf("winux-elev-%d.err", stamp))
+		// winux.exe sudo-helper <out> <err> <cmd> [args...]
+		elevateArgs = append([]string{"sudo-helper", outPath, errPath}, args...)
+	}
+	ps := buildElevateScript(comspec, file, elevateArgs)
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", ps)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	if !shell {
+		defer func() { os.Remove(outPath); os.Remove(errPath) }()
+		// Replay the elevated process's captured output onto our console.
+		if data, err := os.ReadFile(outPath); err == nil && len(data) > 0 {
+			os.Stdout.Write(data)
+		}
+		if data, err := os.ReadFile(errPath); err == nil && len(data) > 0 {
+			os.Stderr.Write(data)
+		}
+	}
+	if runErr != nil {
 		// The elevated process itself failed (e.g. the command returned a
 		// non-zero exit code) — report that code, not a UAC problem.
-		if ee, ok := err.(*exec.ExitError); ok {
+		if ee, ok := runErr.(*exec.ExitError); ok {
 			if code := ee.ExitCode(); code != 0 {
 				return code
 			}
 		}
-		warn(label, "elevation failed: %v (was the UAC prompt declined?)", err)
+		warn(label, "elevation failed: %v (was the UAC prompt declined?)", runErr)
 		return 1
 	}
 	if cmd.ProcessState != nil {
@@ -736,7 +764,44 @@ func elevateAndWait(label string, args []string, shell bool) int {
 	return 0
 }
 
-func buildElevateScript(file string, args []string) string {
+// cmdSudoHelper is the elevated half of elevateAndWait (not a user-facing
+// command): it redirects the sub-command's stdout/stderr into the given files
+// so the caller can replay them in the user's console.
+func cmdSudoHelper(args []string) int {
+	if len(args) < 3 {
+		return 2
+	}
+	outPath, errPath, rest := args[0], args[1], args[2:]
+	c, ok := cmdTable[rest[0]]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "sudo-helper: unknown command '%s'\n", rest[0])
+		return 1
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	var fout, ferr *os.File
+	if f, err := os.Create(outPath); err == nil {
+		fout = f
+		os.Stdout = f
+	}
+	if f, err := os.Create(errPath); err == nil {
+		ferr = f
+		os.Stderr = f
+	}
+	code := c.run(rest[1:])
+	if fout != nil {
+		fout.Close()
+	}
+	if ferr != nil {
+		ferr.Close()
+	}
+	os.Stdout, os.Stderr = oldOut, oldErr
+	return code
+}
+
+// buildElevateScript renders the PowerShell one-liner that raises the UAC
+// prompt and runs the elevated command line (Start-Process -ArgumentList
+// array; PowerShell 5.1 quotes each element, the CRT unquotes them).
+func buildElevateScript(comspec, file string, args []string) string {
 	quoted := make([]string, 0, len(args))
 	for _, a := range args {
 		quoted = append(quoted, "'"+strings.ReplaceAll(a, "'", "''")+"'")
@@ -745,9 +810,10 @@ func buildElevateScript(file string, args []string) string {
 	if list == "" {
 		list = "@()"
 	}
+	psFile := strings.ReplaceAll(comspec, "'", "''")
 	return fmt.Sprintf(
-		"$ErrorActionPreference='Stop'; try { $p = Start-Process -FilePath '%s' -ArgumentList %s -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }",
-		strings.ReplaceAll(file, "'", "''"), list)
+		"$ErrorActionPreference='Stop'; try { $p = Start-Process -FilePath '%s' -ArgumentList %s -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { [Console]::Error.WriteLine('elevation failed: ' + $_.Exception.Message); exit 1 }",
+		psFile, list)
 }
 
 // ------------------------------------------------------------------ su -----

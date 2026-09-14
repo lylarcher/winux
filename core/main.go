@@ -49,6 +49,11 @@ func Main() {
 		os.Exit(c.run(args))
 	}
 
+	// internal UAC elevation helper (not a user-facing command)
+	if len(args) > 0 && args[0] == "sudo-helper" {
+		os.Exit(cmdSudoHelper(args[1:]))
+	}
+
 	if len(args) == 0 {
 		printGlobalHelp()
 		os.Exit(0)
