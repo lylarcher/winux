@@ -158,3 +158,81 @@ func TestSystemctlSshdBuiltinAlias(t *testing.T) {
 		t.Fatalf("is-active code=%d out=%q (want 3/inactive)", code, out)
 	}
 }
+
+// systemd's lifecycle rules, as opposed to the SCM's: `restart` never needs a
+// prior `start`, and `disable` (which only means "do not start at boot") never
+// blocks `start`. Both differences show up as specific SCM errors —
+// ERROR_SERVICE_NOT_ACTIVE ("has not been started") and ERROR_SERVICE_DISABLED
+// ("because it is disabled") — so the test drives a real unit through
+// stop -> restart -> disable -> start and asserts those two never appear.
+//
+// Installing a service needs the SCM, so the test skips unless it runs
+// elevated; the payload is a freshly built winux.exe, because a native service
+// has to talk to the service control manager.
+func TestSystemctlLifecycleLinuxSemantics(t *testing.T) {
+	if !core.IsAdmin() {
+		t.Skip("installing a Windows service needs administrator rights")
+	}
+	exe := buildWinuxExe(t)
+	dir := t.TempDir()
+	unit := "winuxtest"
+	unitPath := filepath.Join(dir, unit+".service")
+	content := "[Unit]\nDescription=winux lifecycle test\n[Service]\nType=native\nExecStart=\"" +
+		exe + "\" sshd --service --port 0\n[Install]\nWantedBy=multi-user.target\n"
+	if err := os.WriteFile(unitPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SYSTEMCTL_UNIT_PATH", dir)
+	t.Cleanup(func() {
+		// leave no service, task or state behind
+		os.Remove(unitPath)
+		core.Execute("systemctl", []string{"stop", unit}, strings.NewReader(""))
+		core.Execute("systemctl", []string{"mask", unit}, strings.NewReader(""))
+		core.Execute("systemctl", []string{"unmask", unit}, strings.NewReader(""))
+		core.Execute("systemctl", []string{"daemon-reload"}, strings.NewReader(""))
+	})
+
+	code, out, errOut := core.Execute("systemctl", []string{"start", unit}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("start: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if code, out, errOut = core.Execute("systemctl", []string{"stop", unit}, strings.NewReader("")); code != 0 {
+		t.Fatalf("stop: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	// stopping twice is not an error either
+	if code, out, errOut = core.Execute("systemctl", []string{"stop", unit}, strings.NewReader("")); code != 0 {
+		t.Fatalf("second stop: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+
+	// restart on a *stopped* unit must start it, not complain about the SCM
+	code, out, errOut = core.Execute("systemctl", []string{"restart", unit}, strings.NewReader(""))
+	if strings.Contains(errOut, "has not been started") {
+		t.Fatalf("restart demanded a prior start: stderr=%q", errOut)
+	}
+	if code != 0 {
+		t.Fatalf("restart on a stopped unit: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+
+	if code, out, errOut = core.Execute("systemctl", []string{"disable", unit}, strings.NewReader("")); code != 0 {
+		t.Fatalf("disable: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if code, out, _ = core.Execute("systemctl", []string{"is-enabled", unit}, strings.NewReader("")); code == 0 {
+		t.Fatalf("unit still reports enabled after disable: %q", out)
+	}
+	// a disabled unit must still start (and stop) on demand
+	core.Execute("systemctl", []string{"stop", unit}, strings.NewReader(""))
+	code, out, errOut = core.Execute("systemctl", []string{"start", unit}, strings.NewReader(""))
+	if strings.Contains(errOut, "disabled") {
+		t.Fatalf("start refused because the unit is disabled: stderr=%q", errOut)
+	}
+	if code != 0 {
+		t.Fatalf("start of a disabled unit: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	// ... and it must still be disabled afterwards, exactly like systemd
+	if code, out, _ = core.Execute("systemctl", []string{"is-enabled", unit}, strings.NewReader("")); code == 0 {
+		t.Fatalf("starting a disabled unit changed its enable state: %q", out)
+	}
+	if code, out, errOut = core.Execute("systemctl", []string{"stop", unit}, strings.NewReader("")); code != 0 {
+		t.Fatalf("stop of a disabled unit: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+}

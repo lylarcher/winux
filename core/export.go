@@ -81,6 +81,11 @@ func CommandNames() []string {
 	return names
 }
 
+// IsAdmin reports whether the current process runs with administrator rights
+// (an elevated token). The test suite uses it to skip the service-manager
+// tests that need the SCM. It is portable: non-Windows builds report false.
+func IsAdmin() bool { return isElevated() }
+
 // ------------------------------------------------------------------ helpers --
 
 // WildcardMatch reports whether name matches the glob pattern (both sides are

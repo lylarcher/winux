@@ -3,6 +3,49 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · systemctl 生命周期对齐 systemd（restart 无需先 start、disable 不阻止 start）；新增 `lsof`；修复 IPv6 套接字表解析**：
+  - **systemctl 生命周期语义**（此前是 SCM 语义，与 systemd 不一致）：
+    - `restart` 不再无条件先 stop：只在单元**正在运行**时才停，对**已停止**
+      的单元直接 start（此前对未运行的服务调 Control(Stop) 会被 SCM 拒绝，
+      报 `restart failed: The service has not been started.`）。停止类调用
+      把 `ERROR_SERVICE_NOT_ACTIVE`(1062) 视为成功，所以 `stop` 一个本来
+      就没运行的单元不再算错误。
+    - `disable` 只表示「不随开机自启」，**不再阻止手动 start**：启动前若服务
+      启动类型是 Disabled，临时提升为 Manual 再启动，成功后**还原为
+      Disabled**（`is-enabled` 依旧报告 disabled），正如
+      `systemctl disable` 之后照样能 `systemctl start`。
+    - `start` 现在会**等待服务真正进入 Running**（最多 10s）：服务刚起就退出
+      时报 `the service exited immediately (check ExecStart and 'systemctl
+      journalctl -u NAME')`，超时报 timed out，不再把「SCM 受理了 StartService」
+      当成启动成功。
+    - `enable`/`disable`/`restart` 在单元既无单元文件也无后端时给出明确
+      提示而不是崩溃或空转。
+  - **新增 `lsof`**（与 `netstat`/`ss` 同源，读 `GetExtendedTcpTable`/
+    `GetExtendedUdpTable`）：lsof 的选择语法与列布局
+    （`COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME`）；
+    `-i [46][tcp|udp][@host][:port[-port]]`（`-i:1022`/`-i :1022`/`-i:80-90`/
+    `-i:ssh`/`-iTCP@10.0.0.1:22`）、`-p PID[,PID]`、`-c NAME`、`-u USER`、
+    `-s PROTO:STATE`（`-sTCP:LISTEN`、`-sTCP:^TIME_WAIT`）、`-a`（并集→交集）、
+    `-4/-6`、`-t`（只打印 PID）、`-n`、`-P`，`^` 前缀为排除；退出码 0（有匹配）
+    /1（无匹配）。Windows 无 `/proc`，故只列**进程映像（FD txt）与进程占有的
+    套接字（TYPE IPv4/IPv6）**，内核持有的 pid 0 套接字（TIME_WAIT 等）与真实
+    lsof 一样不列出；主机名反解并行执行（最多 16 并发、单个 500ms 上限），
+    解析器不可达时不会拖慢命令。
+  - **修复 IPv6 套接字解析**（`GetExtendedTcpTable` 的 v6 行）：此前按 v4 的
+    字段次序读 `MIB_TCP6ROW_OWNER_PID`，导致 IPv6 行的地址、端口、状态整体
+    错位（表现为 `ss -tln`/`netstat -an` 里 v6 监听显示成 `*:*->*:512` 之类）。
+    现在按 `ucLocalAddr[16], dwLocalScopeId, dwLocalPort, ucRemoteAddr[16],
+    dwRemoteScopeId, dwRemotePort, dwState, dwOwningPid` 正确读取，
+    `ss`/`netstat`/`lsof` 的 IPv4/IPv6 行都正确。
+  - 测试：新增 `core/lsof_parse_test.go`（选择器解析、状态名、列渲染、
+    并集/交集/排除规则、服务名↔端口）、`test/lsof_test.go`（真开监听/UDP
+    套接字再查、`-t`、`-p` 映像、退出码、错误选项）、
+    `test/systemctl_test.go` 新增 `TestSystemctlLifecycleLinuxSemantics`
+    （真实服务跑 stop→restart→disable→start，断言不再出现
+    "has not been started"/"because it is disabled"；需管理员，非提升
+    shell 自动跳过）；smoke 新增 lsof 断言（`--help` 循环 + 网络段落）。
+  - README：命令表新增 `lsof` 行，新增「lsof 说明」章节，
+    「systemctl 说明」补「生命周期语义按 systemd（不是按 SCM）」小节。
 - **2026-09-14 · systemctl 内置单元自愈：winux.exe 换路径后自动重同步**：
   - 物化的 `winux-sshd.service` 里 ExecStart 是**绝对路径**（物化时的
     winux.exe）。把 winux.exe 拷到新位置后，旧文件仍指向旧路径（如

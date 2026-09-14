@@ -224,7 +224,7 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)' -and $ver -match 'from: ') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
+            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -523,10 +523,15 @@ EOF
 
     . (Join-Path $bin 'winux-deactivate.ps1')
     Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
+    # the *session function* must be gone; a winux-deactivate.ps1 that happens to
+    # sit in a PATH directory (an installed winux, e.g. D:\my-tools\winux) is a
+    # legitimate ExternalScript resolution and must not fail this check
     Check 'deactivate removed the winux-deactivate session function' `
-        (-not (Get-Command winux-deactivate -ErrorAction SilentlyContinue))
+        ((Get-Command winux-deactivate -ErrorAction SilentlyContinue).CommandType -ne 'Function') `
+        (Get-Command winux-deactivate -ErrorAction SilentlyContinue).Source
     Check 'deactivate removed the winux-activate session function' `
-        (-not (Get-Command winux-activate -ErrorAction SilentlyContinue))
+        ((Get-Command winux-activate -ErrorAction SilentlyContinue).CommandType -ne 'Function') `
+        (Get-Command winux-activate -ErrorAction SilentlyContinue).Source
     Check 'deactivate restored the original PowerShell prompt' `
         ((Text (& prompt)) -notlike '(winux) *') (Text (& prompt))
     Check 'deactivate cleared the activation markers' ((($null -eq $env:WINUX_ACTIVE) -and ($null -eq $env:WINUX_STATE)) -and ($null -eq $env:WINUX_OLD_PATH))
@@ -601,6 +606,16 @@ Write-Output 'ps-coexist-ok'
         Check 'netstat -s shows protocol statistics' ((Text (& $winux netstat -s)) -match 'TCP Statistics')
         Check 'ss -t -a -n lists sockets' ((Text (& $winux ss -t -a -n)) -match 'LISTEN|ESTAB')
         Check 'ss -s prints a summary' ((Text (& $winux ss -s)) -match 'Total:')
+        $lsofOut = Text (& $winux lsof -i -P -n)
+        Check 'lsof -i -P -n lists network endpoints' ($lsofOut -match 'COMMAND' -and $lsofOut -match 'LISTEN')
+        $lsofTerse = Text (& $winux lsof -t -i -P -n)
+        Check 'lsof -t prints only pids' (($lsofTerse -notmatch 'COMMAND') -and ($lsofTerse -match '^\s*\d+')) $lsofTerse
+        Check 'lsof -sTCP:LISTEN keeps listeners only' ((Text (& $winux lsof -sTCP:LISTEN -P -n)) -match 'LISTEN')
+        Check 'lsof -p PID lists the process image' ((Text (& $winux lsof -p $PID)) -match 'txt')
+        $code = Invoke-CmdLine "`"${winux}`" lsof -c no-such-command-xyz >nul 2>&1"
+        Check 'lsof exits 1 when nothing matches' ($code -eq 1) "exit=$code"
+        $code = Invoke-CmdLine "`"${winux}`" lsof -Z >nul 2>&1"
+        Check 'lsof rejects unsupported options' ($code -eq 1) "exit=$code"
         Check 'ip addr shows the loopback' ((Text (& $winux ip a)) -match '127\.0\.0\.1/8')
         Check 'ip -br a lists interfaces' ((Text (& $winux ip -br a)) -match 'UP|DOWN')
         Check 'ip route shows a default route' ((Text (& $winux ip r)) -match 'default|dev')

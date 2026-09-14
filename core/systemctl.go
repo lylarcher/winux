@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -1014,6 +1016,11 @@ func cmdSystemctl(args []string) int {
 				}
 				rt = sysGetRuntime(n)
 			}
+			if rt == nil {
+				fmt.Fprintf(os.Stderr, "systemctl: %s: no runtime backend\n", n)
+				code = 1
+				continue
+			}
 			if e := sysRestartUnit(rt, n); e != nil {
 				fmt.Fprintf(os.Stderr, "systemctl: %s restart failed: %v\n", n, e)
 				code = 1
@@ -1040,6 +1047,11 @@ func cmdSystemctl(args []string) int {
 				}
 				rt = sysGetRuntime(n)
 			}
+			if rt == nil {
+				fmt.Fprintf(os.Stderr, "systemctl: %s: no runtime backend\n", n)
+				code = 1
+				continue
+			}
 			if e := sysSetEnabled(rt, n, true); e != nil {
 				fmt.Fprintf(os.Stderr, "systemctl: %s enable failed: %v\n", n, e)
 				code = 1
@@ -1051,6 +1063,12 @@ func cmdSystemctl(args []string) int {
 		for _, n := range names {
 			_, rt, _, err := sysResolveTarget(n)
 			if !req(err == nil, "systemctl: %v", err) {
+				continue
+			}
+			if rt == nil {
+				// nothing installed: a unit that never runs at boot cannot
+				// be "un-enabled", which is not an error in systemd either
+				fmt.Printf("%s is not installed; nothing to disable\n", n)
 				continue
 			}
 			if e := sysSetEnabled(rt, n, false); e != nil {
@@ -1187,20 +1205,148 @@ func sysFilterNames(args []string) []string {
 	return out
 }
 
+// Windows SCM refusals that have no systemd equivalent. `systemctl disable`
+// only means "do not start at boot" — it never blocks an explicit start — and
+// stopping a unit that already stopped is a no-op, not an error. The SCM
+// disagrees on both counts, so these two codes are translated in sysStartUnit
+// and sysStopUnit.
+const (
+	errSvcDisabled  = syscall.Errno(1058) // ERROR_SERVICE_DISABLED
+	errSvcNotActive = syscall.Errno(1062) // ERROR_SERVICE_NOT_ACTIVE
+)
+
+// sysStartTimeout bounds how long a start waits for the service to report
+// running, so `systemctl start` fails loudly when the payload dies at once
+// instead of claiming success.
+const sysStartTimeout = 10 * time.Second
+
+// withStartType copies cfg with a different start type.
+func withStartType(cfg mgr.Config, st uint32) mgr.Config {
+	cfg.StartType = st
+	return cfg
+}
+
+// sysServiceHandle opens the SCM and the service; the caller must Close both.
+func sysServiceHandle(name string) (*mgr.Mgr, *mgr.Service, error) {
+	m, err := sysOpenMgr()
+	if err != nil {
+		return nil, nil, err
+	}
+	s, err := m.OpenService(name)
+	if err != nil {
+		m.Disconnect()
+		return nil, nil, err
+	}
+	return m, s, nil
+}
+
+// sysForceDemandStart flips a Disabled service to demand start so the SCM
+// accepts a start request, returning the start type to restore (0 = untouched).
+func sysForceDemandStart(s *mgr.Service) uint32 {
+	cfg, err := s.Config()
+	if err != nil || cfg.StartType != mgr.StartDisabled {
+		return 0
+	}
+	if err := s.UpdateConfig(withStartType(cfg, mgr.StartManual)); err != nil {
+		return 0
+	}
+	return mgr.StartDisabled
+}
+
+// sysRestoreStartType puts a temporarily changed start type back.
+func sysRestoreStartType(s *mgr.Service, st uint32) {
+	if st == 0 {
+		return
+	}
+	if cfg, err := s.Config(); err == nil && cfg.StartType != st {
+		s.UpdateConfig(withStartType(cfg, st))
+	}
+}
+
+// sysWaitServiceRunning waits until the service reports running. A service
+// that reaches stopped instead means the payload exited immediately (bad
+// ExecStart, port already in use, missing binary) — report that rather than
+// printing a cheerful "started".
+func sysWaitServiceRunning(name string, timeout time.Duration) error {
+	m, s, err := sysServiceHandle(name)
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	defer s.Close()
+	deadline := time.Now().Add(timeout)
+	for {
+		st, err := s.Query()
+		if err != nil {
+			return err
+		}
+		switch st.State {
+		case svc.Running:
+			return nil
+		case svc.Stopped:
+			return fmt.Errorf("the service exited immediately (check ExecStart and 'systemctl journalctl -u %s')", name)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for the service to start")
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
+}
+
+// sysWaitServiceStopped waits until the service reports stopped (restart must
+// not race the previous instance's shutdown).
+func sysWaitServiceStopped(name string, timeout time.Duration) error {
+	m, s, err := sysServiceHandle(name)
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	defer s.Close()
+	deadline := time.Now().Add(timeout)
+	for {
+		st, err := s.Query()
+		if err != nil {
+			return err
+		}
+		if st.State == svc.Stopped {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for the service to stop")
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
+}
+
 func sysStartUnit(rt *sysRuntime, name string) error {
+	if rt == nil {
+		return fmt.Errorf("no runtime backend for %s", name)
+	}
 	switch rt.Kind {
 	case "service", "loginsvc":
-		m, err := sysOpenMgr()
+		m, s, err := sysServiceHandle(name)
 		if err != nil {
 			return err
 		}
 		defer m.Disconnect()
-		s, err := m.OpenService(name)
-		if err != nil {
-			return err
-		}
 		defer s.Close()
-		return s.Start()
+		// Linux semantics: a disabled unit can still be started on demand.
+		// Windows refuses (ERROR_SERVICE_DISABLED), so lift the start type for
+		// the duration of the start and put it back afterwards — the unit
+		// stays disabled across reboots, exactly like systemd.
+		restore := sysForceDemandStart(s)
+		err = s.Start()
+		if err != nil && restore == 0 && errors.Is(err, errSvcDisabled) {
+			restore = sysForceDemandStart(s)
+			if restore != 0 {
+				err = s.Start()
+			}
+		}
+		if err == nil {
+			err = sysWaitServiceRunning(name, sysStartTimeout)
+		}
+		sysRestoreStartType(s, restore)
+		return err
 	case "task", "login":
 		return sysStartStopTask(name, rt.Kind == "login", true)
 	}
@@ -1208,20 +1354,25 @@ func sysStartUnit(rt *sysRuntime, name string) error {
 }
 
 func sysStopUnit(rt *sysRuntime, name string) error {
+	if rt == nil {
+		return fmt.Errorf("no runtime backend for %s", name)
+	}
 	switch rt.Kind {
 	case "service", "loginsvc":
-		m, err := sysOpenMgr()
+		m, s, err := sysServiceHandle(name)
 		if err != nil {
 			return err
 		}
 		defer m.Disconnect()
-		s, err := m.OpenService(name)
-		if err != nil {
+		defer s.Close()
+		if _, err := s.Control(svc.Stop); err != nil {
+			// already stopped: stopping an inactive unit is not an error
+			if errors.Is(err, errSvcNotActive) {
+				return nil
+			}
 			return err
 		}
-		defer s.Close()
-		_, err = s.Control(svc.Stop)
-		return err
+		return sysWaitServiceStopped(name, sysStartTimeout)
 	case "task", "login":
 		return sysStartStopTask(name, rt.Kind == "login", false)
 	}
@@ -1229,11 +1380,21 @@ func sysStopUnit(rt *sysRuntime, name string) error {
 }
 
 func sysRestartUnit(rt *sysRuntime, name string) error {
+	if rt == nil {
+		return fmt.Errorf("no runtime backend for %s", name)
+	}
+	// Re-read the state: rt may be stale (e.g. the unit was stopped by hand).
+	if fresh := sysGetRuntime(name); fresh != nil {
+		rt = fresh
+	}
 	if rt.Kind == "service" || rt.Kind == "loginsvc" {
-		if err := sysStopUnit(rt, name); err != nil {
-			return err
+		// `restart` on a stopped unit is just a start — systemd never requires
+		// a prior `start`.
+		if rt.Running {
+			if err := sysStopUnit(rt, name); err != nil {
+				return err
+			}
 		}
-		time.Sleep(1500 * time.Millisecond)
 		return sysStartUnit(rt, name)
 	}
 	if rt.Running {
@@ -1246,6 +1407,9 @@ func sysRestartUnit(rt *sysRuntime, name string) error {
 }
 
 func sysSetEnabled(rt *sysRuntime, name string, enabled bool) error {
+	if rt == nil {
+		return fmt.Errorf("no runtime backend for %s", name)
+	}
 	switch rt.Kind {
 	case "service", "loginsvc":
 		m, err := sysOpenMgr()
@@ -1605,6 +1769,13 @@ unit lifecycle:
   start <unit>    stop <unit>    restart <unit>
   enable <unit>   disable <unit>
   mask <unit>     unmask <unit>
+
+  start/stop/restart follow systemd's rules, not the SCM's:
+    * restart works on a stopped unit (it simply starts it);
+    * a disabled unit can still be started and stopped — disable only means
+      "do not start at boot" (the SCM refuses to start Disabled services, so
+      winux lifts the start type for the start and restores it afterwards);
+    * stopping an inactive unit, or starting a running one, is not an error.
 
 query:
   status <unit>           detailed status; status (no args) lists units

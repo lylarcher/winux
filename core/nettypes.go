@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -116,10 +117,20 @@ var (
 	services     map[int]string // port -> service name (TCP)
 )
 
-// serviceName resolves a well-known port via %SystemRoot%\System32\drivers\
-// etc\services, falling back to a small built-in table. On non-Windows the
-// SystemRoot lookup simply fails and the fallback table is used.
-func serviceName(port int) string {
+// knownPorts is the built-in fallback table used when the system services file
+// has no entry; serviceName and servicePort share it.
+var knownPorts = map[int]string{
+	22:   "ssh",
+	53:   "domain",
+	80:   "http",
+	443:  "https",
+	445:  "microsoft-ds",
+	3389: "ms-wbt-server",
+}
+
+// loadServices reads %SystemRoot%\System32\drivers\etc\services once. On
+// non-Windows the lookup simply fails and only knownPorts is available.
+func loadServices() {
 	servicesOnce.Do(func() {
 		services = map[int]string{}
 		data, err := os.ReadFile(os.Getenv("SystemRoot") + `\System32\drivers\etc\services`)
@@ -147,22 +158,37 @@ func serviceName(port int) string {
 			}
 		}
 	})
+}
+
+// serviceName resolves a well-known port via the services file, falling back
+// to the built-in table.
+func serviceName(port int) string {
+	loadServices()
 	if name, ok := services[port]; ok {
 		return name
 	}
-	switch port {
-	case 22:
-		return "ssh"
-	case 53:
-		return "domain"
-	case 80:
-		return "http"
-	case 443:
-		return "https"
-	case 445:
-		return "microsoft-ds"
-	case 3389:
-		return "ms-wbt-server"
+	return knownPorts[port]
+}
+
+// servicePort names the inverse of serviceName: it turns a service name (or a
+// numeric string) into a TCP port, which is what `lsof -i:ssh` needs.
+func servicePort(name string) (int, bool) {
+	if n, err := strconv.Atoi(name); err == nil {
+		if n > 0 && n < 65536 {
+			return n, true
+		}
+		return 0, false
 	}
-	return ""
+	loadServices()
+	for port, svc := range services {
+		if strings.EqualFold(svc, name) {
+			return port, true
+		}
+	}
+	for port, svc := range knownPorts {
+		if strings.EqualFold(svc, name) {
+			return port, true
+		}
+	}
+	return 0, false
 }

@@ -21,9 +21,9 @@ import (
 	"winux/core"
 )
 
-// sshTestExe builds a fresh winux.exe from the module root (a stale
+// buildWinuxExe builds a fresh winux.exe from the module root (a stale
 // bin\winux.exe may predate the sshd command, so always build).
-func sshTestExe(t *testing.T) string {
+func buildWinuxExe(t *testing.T) string {
 	t.Helper()
 	tmp := filepath.Join(t.TempDir(), "winux.exe")
 	cmd := exec.Command("go", "build", "-o", tmp, "..")
@@ -37,7 +37,7 @@ func sshTestExe(t *testing.T) string {
 // plus a cleanup function.
 func startSSHD(t *testing.T) (addr string, stop func()) {
 	t.Helper()
-	exe := sshTestExe(t)
+	exe := buildWinuxExe(t)
 	cmd := exec.Command(exe, "sshd", "--auth", "any", "--port", "0")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

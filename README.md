@@ -211,6 +211,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `ps` | `aux`/`-ef`/`-e`/`-p`/`-u`/`-C`/`-o`/`--sort`/`-t` 等；数据来自 WMI（`Get-CimInstance Win32_Process`），无外部依赖（见下「进程」） |
 | `netstat` | `-a -t -u -l -n -o -p tcp\|udp -e -i -r -s`；Windows 布局（`Proto Local Foreign State`） |
 | `ss` | `-a -t -u -l -n -p -e -o -m -s -r -i -4 -6`；Linux（iproute2）布局；与 netstat 读同一份内核套接字表 |
+| `lsof` | `-i [46][tcp\|udp][@host][:port[-port]] -p -c -u -s PROTO:STATE -a -4 -6 -t -n -P`；`COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME` 布局，Windows 上列出**进程映像（FD txt）与进程占有的套接字**（TYPE IPv4/IPv6），退出码 0/1（见「lsof 说明」） |
 | `ifconfig` | 默认直通系统 `ipconfig.exe`（别名 `ipconfig`）；`--help`/`--version` 为 winux 自带；`/release /renew /flushdns` 等改网操作被拒绝（见下「网络只读」） |
 | `ip` | `addr/link/route/neigh` 的 `show`（含 `-4 -6 -br -o`）；iproute2 输出风格；一切改网子命令（`addr add`、`link set`、`route add`…）拒绝并提示原生替代 |
 | `nmcli` | `device status/show`、`connection show`、`general status/permissions/hostname`；改网子命令拒绝（Windows 无 NetworkManager，列表由适配器推导） |
@@ -492,7 +493,8 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
 
 - `netstat` 采用 Windows 布局（`Proto  Local  Foreign  State`），`ss` 采用
   Linux（iproute2）布局（`State  Recv-Q  Send-Q  Local:Port  Peer:Port`），两者
-  读同一份表。
+  读同一份表。`lsof` 也读同一份套接字表，只是换成 lsof 的列布局（见
+  「lsof 说明」）。
 - `ifconfig` 默认直通系统 `ipconfig.exe`（`ifconfig /all` 可用；`ipconfig`
   是它的别名），只有 `/release /renew /flushdns` 等改网参数被拒绝。
 - `nmtui` 不做任何查询/修改：它直接调出 Windows 原生的**网络连接**面板
@@ -502,6 +504,42 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
 - **网络相关测试必须显式开启**：单元测试默认跳过网络用例，设环境变量
   `WINUX_NET_TESTS=1` 才运行（都是只读查询与「拒绝」用例）；
   冒烟测试的网络段落需 `smoke.ps1 -Network`。请先确认自己明白这些是只读操作再开。
+
+## lsof 说明
+
+`lsof` 沿用 Linux 上的选择语法与列布局，读的是 Windows 内核套接字表
+（`GetExtendedTcpTable`/`GetExtendedUdpTable`，与 `netstat`/`ss` 同一份数据）
+加上进程映像。**只读**：不打开任何写句柄、不修改任何状态。
+
+```
+$ winux lsof -i :1022                 # 谁在听 1022
+COMMAND     PID USER          FD   TYPE  DEVICE  SIZE/OFF NODE NAME
+winux.exe 12345 honor-168\lyl  -    IPv4  0x0     0t0      TCP  *:1022 (LISTEN)
+
+$ winux lsof -t -i :1022              # 只要 PID（可直接 kill $(...)）
+12345
+$ winux lsof -i -a -u lyl             # lyl 的网络连接
+$ winux lsof -p 4321                  # 某进程的映像 + 套接字
+$ winux lsof -sTCP:LISTEN -P -n       # 只看监听，不做名字解析
+```
+
+- **选项**：`-i [46][tcp|udp][@host][:port[-port]]`（可重复；`-i:1022`、
+  `-i :1022`、`-iTCP@10.0.0.1:22`、`-i:80-90`、`-i:ssh` 都支持）、
+  `-p PID[,PID]`、`-c NAME`（前缀匹配）、`-u USER`（`lyl` 或 `域\lyl`）、
+  `-s PROTO:STATE`（如 `-sTCP:LISTEN`、`-sTCP:^TIME_WAIT`）、`-a`（把默认的
+  并集改成交集）、`-4`/`-6`、`-t`（只打印 PID）、`-n`（不解析主机名）、
+  `-P`（不解析服务名）；`^` 前缀表示排除（`-p ^5`、`-c ^svchost`）。
+- **列**：`COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME`。套接字为
+  `FD=-`、`TYPE=IPv4|IPv6`、`NODE=TCP|UDP`、`DEVICE=0x0`、`SIZE/OFF=0t0`；
+  进程映像为 `FD=txt`、`TYPE=REG`、`NAME=映像路径`。`NAME` 里监听是
+  `*:1022 (LISTEN)`，连接是 `本地->对端 (ESTABLISHED)`。
+- **退出码**：有匹配 0，无匹配 1（同 lsof 约定，脚本里可 `if lsof -i:PORT`）。
+- **诚实说明**：Windows 没有 `/proc`，也没有「枚举某进程打开的句柄」的公开
+  API，所以 winux lsof 覆盖的是原生 API 能给出的部分——**进程映像 + 该进程
+  占有的套接字**；内存映射、管道、匿名句柄、`/dev` 风格伪文件无法列出。
+  内核自己持有的套接字（pid 0 的 TIME_WAIT 等）与真实 lsof 一样不列出
+  （要看它们用 `ss`/`netstat`）。`-U`（UNIX 域套接字）在 Windows 上无对应
+  物。位置参数只支持 PID 或映像路径前缀，不支持「设备号」形式。
 
 ## tcpdump 说明
 
@@ -661,6 +699,19 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
   单元）、`list-units`/`list-unit-files`、`mask/unmask NAME`、
   `journalctl -u NAME [-n N] [-f] [-r] [--since TIME]`、`daemon-reload`。
   变更类命令需要管理员权限（会先检查令牌并明确提示）。
+- **生命周期语义按 systemd（不是按 SCM）**：
+  - `restart` 不需要先 `start`——对**已停止**的单元一样能直接起来（不会像
+    SCM 那样报 "The service has not been started."）；对正在运行的单元才是
+    「先停后起」。
+  - `disable`/`enable` 只管**开机是否自启**，不影响手动 `start`/`stop`：
+    被 `disable` 的单元仍然可以 `start`（winux 会临时把服务启动类型提升为
+    手动、启动完成后再还原为禁用，结束后 `is-enabled` 仍报告 disabled），
+    正如 systemd 里 `systemctl disable` 之后照样能 `systemctl start`。
+  - `stop` 一个本来就没在运行的单元、`start` 一个已经在运行的单元都**不算
+    错误**（幂等，同 systemd）。
+  - `start` 会等待服务真正进入 Running：服务刚起就退出时报
+    `the service exited immediately (check ExecStart and 'systemctl journalctl -u NAME')`，
+    不会假报成功。
 - **内置单元 `sshd`**：winux 的 SSH 服务端是内置单元，无需手写
   .service 文件——`systemctl status sshd` / `start sshd` / `cat sshd`
   直接可用（内部映射到服务名 **winux-sshd**，首次使用自动物化单元文件
@@ -704,17 +755,18 @@ Windows 上**不需要安装 OpenSSH 组件**。
 # 单元测试（flags、glob/tilde 展开、cp/rm/mv/mkdir/touch/ls、grep 上下文、
 #            head/tail/wc/sort/uniq/cut/tr、pager/vi 内部逻辑、date 解析、
 #            chmod/cal、ps、nc 回环、clickhouse 假 HTTP 端、mongodb/psql
-#            假 wire 端、真 sqlite 内存/临时库；netstat/ss、ip/nmcli/ifconfig
-#            等网络用例默认跳过，见「网络命令（只读策略）」）
+#            假 wire 端、真 sqlite 内存/临时库；netstat/ss、lsof、
+#            ip/nmcli/ifconfig 等网络用例默认跳过，见「网络命令（只读策略）」；
+#            systemctl 的服务生命周期用例需要管理员权限，非提升的 shell 会跳过）
 go test ./...
 
 # 一键构建 + 垫片 + 激活脚本（-Version x.y.z 正式版 / -Version dev 用 git commit id）
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，224 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，225 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
-# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ifconfig，在常规项之上增加）
+# 冒烟测试另跑只读网络段落（netstat/ss/lsof/ip/nmcli/ifconfig，在常规项之上增加）
 # ——需要你确认只读后使用
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 ```

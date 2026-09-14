@@ -76,23 +76,27 @@ func tcpRowsFamily(family uint32) ([]sockRow, error) {
 		for i := uint32(0); i < num; i++ {
 			p := buf[4+int(i)*rowSize:]
 			rows = append(rows, sockRow{
-				proto: "tcp",
-				state: int(*(*uint32)(unsafe.Pointer(&p[0]))),
-				local: fmt.Sprintf("%s:%d", ipv4(p[4:8]), swap16(*(*uint32)(unsafe.Pointer(&p[8])))),
+				proto:  "tcp",
+				state:  int(*(*uint32)(unsafe.Pointer(&p[0]))),
+				local:  fmt.Sprintf("%s:%d", ipv4(p[4:8]), swap16(*(*uint32)(unsafe.Pointer(&p[8])))),
 				remote: fmt.Sprintf("%s:%d", ipv4(p[12:16]), swap16(*(*uint32)(unsafe.Pointer(&p[16])))),
-				pid:   int(*(*uint32)(unsafe.Pointer(&p[20]))),
+				pid:    int(*(*uint32)(unsafe.Pointer(&p[20]))),
 			})
 		}
 	} else {
+		// MIB_TCP6ROW_OWNER_PID: ucLocalAddr[16], dwLocalScopeId,
+		// dwLocalPort, ucRemoteAddr[16], dwRemoteScopeId, dwRemotePort,
+		// dwState, dwOwningPid — the state and the ports sit *after* the
+		// addresses, not before them.
 		const rowSize = 56 // MIB_TCP6ROW_OWNER_PID
 		for i := uint32(0); i < num; i++ {
 			p := buf[4+int(i)*rowSize:]
 			rows = append(rows, sockRow{
-				proto: "tcp6",
-				state: int(*(*uint32)(unsafe.Pointer(&p[0]))),
-				local: fmt.Sprintf("%s:%d", ipv6(p[4:20]), swap16(*(*uint32)(unsafe.Pointer(&p[24])))),
-				remote: fmt.Sprintf("%s:%d", ipv6(p[28:44]), swap16(*(*uint32)(unsafe.Pointer(&p[48])))),
-				pid:   int(*(*uint32)(unsafe.Pointer(&p[52]))),
+				proto:  "tcp6",
+				state:  int(*(*uint32)(unsafe.Pointer(&p[48]))),
+				local:  fmt.Sprintf("%s:%d", ipv6(p[0:16]), swap16(*(*uint32)(unsafe.Pointer(&p[20])))),
+				remote: fmt.Sprintf("%s:%d", ipv6(p[24:40]), swap16(*(*uint32)(unsafe.Pointer(&p[44])))),
+				pid:    int(*(*uint32)(unsafe.Pointer(&p[52]))),
 			})
 		}
 	}
@@ -130,10 +134,10 @@ func udpRowsFamily(family uint32) ([]sockRow, error) {
 		for i := uint32(0); i < num; i++ {
 			p := buf[4+int(i)*rowSize:]
 			rows = append(rows, sockRow{
-				proto: "udp",
-				local: fmt.Sprintf("%s:%d", ipv4(p[0:4]), swap16(*(*uint32)(unsafe.Pointer(&p[4])))),
+				proto:  "udp",
+				local:  fmt.Sprintf("%s:%d", ipv4(p[0:4]), swap16(*(*uint32)(unsafe.Pointer(&p[4])))),
 				remote: "*:*",
-				pid:   int(*(*uint32)(unsafe.Pointer(&p[8]))),
+				pid:    int(*(*uint32)(unsafe.Pointer(&p[8]))),
 			})
 		}
 	} else {
@@ -141,10 +145,10 @@ func udpRowsFamily(family uint32) ([]sockRow, error) {
 		for i := uint32(0); i < num; i++ {
 			p := buf[4+int(i)*rowSize:]
 			rows = append(rows, sockRow{
-				proto: "udp6",
-				local: fmt.Sprintf("%s:%d", ipv6(p[0:16]), swap16(*(*uint32)(unsafe.Pointer(&p[20])))),
+				proto:  "udp6",
+				local:  fmt.Sprintf("%s:%d", ipv6(p[0:16]), swap16(*(*uint32)(unsafe.Pointer(&p[20])))),
 				remote: "*:*",
-				pid:   int(*(*uint32)(unsafe.Pointer(&p[24]))),
+				pid:    int(*(*uint32)(unsafe.Pointer(&p[24]))),
 			})
 		}
 	}
@@ -215,11 +219,11 @@ func ifRows() ([]ifRow, error) {
 	for i := uint32(0); i < num; i++ {
 		p := buf[4+int(i)*mibIfRowSize:]
 		row := ifRow{
-			index:   *(*uint32)(unsafe.Pointer(&p[512])),
-			mtu:     *(*uint32)(unsafe.Pointer(&p[520])),
-			speed:   *(*uint32)(unsafe.Pointer(&p[524])),
-			adminUp: *(*uint32)(unsafe.Pointer(&p[540])) == 1,
-			operUp:  *(*uint32)(unsafe.Pointer(&p[544])) == 1,
+			index:       *(*uint32)(unsafe.Pointer(&p[512])),
+			mtu:         *(*uint32)(unsafe.Pointer(&p[520])),
+			speed:       *(*uint32)(unsafe.Pointer(&p[524])),
+			adminUp:     *(*uint32)(unsafe.Pointer(&p[540])) == 1,
+			operUp:      *(*uint32)(unsafe.Pointer(&p[544])) == 1,
 			inOctets:    *(*uint32)(unsafe.Pointer(&p[552])), // dwLastChange at 548
 			inUcast:     *(*uint32)(unsafe.Pointer(&p[556])),
 			inNUcast:    *(*uint32)(unsafe.Pointer(&p[560])),
