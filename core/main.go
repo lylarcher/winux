@@ -9,9 +9,15 @@ import (
 	_ "time/tzdata" // embed the IANA database so `date` and `touch -d` work offline
 )
 
-const (
-	Version  = "1.0.0"
-	progName = "winux"
+// Version and BuildTime are plain package variables so the build can stamp
+// them with `go build -ldflags "-X winux/core.Version=... -X winux/core.BuildTime=..."`.
+// build.ps1 injects the 8-char git commit id (falling back to 1.0.0 when there
+// is no local git repository) and the build timestamp; a plain `go build`
+// leaves the defaults.
+var (
+	Version   = "1.0.0"
+	BuildTime = ""
+	progName  = "winux"
 )
 
 type command struct {
@@ -31,7 +37,7 @@ func addCmd(name, summary string, run func([]string) int, aliases ...string) {
 	}
 }
 
-func Main()() {
+func Main() {
 	initConsole()
 
 	args := os.Args[1:]
@@ -59,7 +65,11 @@ func Main()() {
 		printGlobalHelp()
 		os.Exit(0)
 	case "--version", "-V", "version":
-		fmt.Printf("%s %s\n", progName, Version)
+		if BuildTime != "" {
+			fmt.Printf("%s %s (built %s)\n", progName, Version, BuildTime)
+		} else {
+			fmt.Printf("%s %s\n", progName, Version)
+		}
 		os.Exit(0)
 	}
 
@@ -73,7 +83,11 @@ func Main()() {
 }
 
 func printGlobalHelp() {
-	fmt.Printf("%s %s - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version)
+	if BuildTime != "" {
+		fmt.Printf("%s %s (built %s) - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version, BuildTime)
+	} else {
+		fmt.Printf("%s %s - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version)
+	}
 	fmt.Println("Native Go implementation: no WSL, no MSYS2/Cygwin, no Python runtime needed.")
 	fmt.Println()
 	fmt.Println("Usage:")
@@ -131,6 +145,10 @@ func printUsage(name, argSpec string, f *Flags) {
 }
 
 func printVersion(name string) {
+	if BuildTime != "" {
+		fmt.Printf("%s (%s) %s (built %s)\n", name, progName, Version, BuildTime)
+		return
+	}
 	fmt.Printf("%s (%s) %s\n", name, progName, Version)
 }
 

@@ -593,6 +593,22 @@ powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 也可以 `go build -o bin\winux.exe .` 手动构建。`build.ps1 -RealExes` 可改为生成
 每个命令的真实 exe（硬链接，省空间），`-CopyInsteadOfHardLinks` 用复制。
 
+**版本号**由 `build.ps1` 构建时经 `-ldflags -X` 注入：取本地 git 仓库
+`HEAD` 的**后 8 位 commit id**（`git rev-parse --short=8 HEAD`），同时注入
+**构建时间**（`yyyy-MM-ddTHH:mm:ss`）；机器上没有 git 或不在 git 仓库内则
+回退为 `1.0.0`（仅版本，构建时间仍注入）。因此：
+
+```
+$ winux --version
+winux 769020d4 (built 2026-09-14T09:08:54)
+$ cp --version
+cp (winux) 769020d4 (built 2026-09-14T09:08:54)
+```
+
+`winux version`、`winux -V`、全局 `--help` 首行与各命令的 `--version`
+一致显示；`uname -v` 输出 `winux <commit>`。直接 `go build`（不经
+build.ps1）不注入，`Version` 保持默认 `1.0.0`、不显示 build time。
+
 ## 目录结构
 
 ```
@@ -631,7 +647,7 @@ winux/
 ├─ README.md        使用文档（快速开始/命令表/各命令说明）
 ├─ CHANGELOG.md     更新记录（历次功能与修复，倒序）
 ├─ .gitattributes   文本统一 LF、二进制不规范化
-├─ build.ps1        构建（垫片/激活脚本内嵌于 exe，构建后经 `winux shims` 解压）
+├─ build.ps1        构建（版本/构建时间经 -ldflags 注入；垫片内嵌于 exe，构建后经 `winux shims` 解压）
 ├─ install.ps1      持久化安装（用户 PATH + PowerShell 配置档）
 ├─ smoke.ps1        双 shell 端到端冒烟测试（-Network 额外跑只读网络段）
 └─ bin/             构建产物：winux.exe、winux-activate.ps1/winux-deactivate.ps1

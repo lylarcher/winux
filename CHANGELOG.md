@@ -3,6 +3,18 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 构建注入 git commit id 与构建时间**：`Version` 由常量改为
+  包变量，新增 `BuildTime`；`build.ps1` 构建时经
+  `-ldflags "-X winux/core.Version=… -X winux/core.BuildTime=…"` 注入
+  **HEAD 后 8 位 commit id**（`git rev-parse --short=8 HEAD`）与构建时间
+  （无空格的 ISO `yyyy-MM-ddTHH:mm:ss`，避免 PowerShell 5.1 对含引号
+  ldflags 参数的破坏）；机器上**没有 git 或不在 git 仓库**时版本回退
+  `1.0.0`（先 `Get-Command git` 预检，避免 ErrorActionPreference=Stop 下
+  直接终止）。`winux --version`/`version`/`-V`、各命令 `--version`、全局
+  `--help` 首行均显示 `(built <时间>)`；`uname -v` 输出 `winux <commit>`；
+  直接 `go build`（不经 build.ps1）不注入，保持默认 `1.0.0` 且不显示
+  build time。smoke 新增版本格式断言（`winux <8位hex|1.0.0> (built …)`）。
+
 - **2026-09-14 · 新增 `uptime`、`clickhouse`，`ipconfig` 改名 `ifconfig`**：
   - **`ipconfig` → `ifconfig`**（Linux 风格名，`ipconfig` 保留为别名，两个
     垫片都在）：命令行为不变（默认直通系统 `ipconfig.exe`，改网参数拒绝）。

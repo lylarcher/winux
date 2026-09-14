@@ -45,7 +45,11 @@ func cmdIpconfig(args []string) int {
 			return 0
 		}
 		if a == "--version" || a == "-V" {
-			fmt.Println("ifconfig " + Version)
+			if BuildTime != "" {
+				fmt.Printf("ifconfig %s (built %s)\n", Version, BuildTime)
+			} else {
+				fmt.Println("ifconfig " + Version)
+			}
 			return 0
 		}
 	}

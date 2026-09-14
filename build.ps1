@@ -52,9 +52,22 @@ if (-not $SkipTests) {
 }
 
 Write-Host 'Building bin\winux.exe ...' -ForegroundColor Cyan
+
+# Stamp the version with the 8-char git commit id (fallback 1.0.0 when there is
+# no local git repository) and the build timestamp into core.Version/BuildTime.
+$commit = '1.0.0'
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $rev = & git rev-parse --short=8 HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $rev) { $commit = $rev.Trim() }
+}
+# ISO timestamp with a 'T' separator: no spaces, so the linker's -X value
+# needs no quoting (PowerShell 5.1 mangles quoted -ldflags arguments).
+$buildTime = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+$ldflags = "-s -w -X winux/core.Version=$commit -X winux/core.BuildTime=$buildTime"
+
 Push-Location $root
 try {
-    & go build -trimpath -ldflags '-s -w' -o (Join-Path $bin 'winux.exe') .
+    & go build -trimpath -ldflags $ldflags -o (Join-Path $bin 'winux.exe') .
     if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }
 
@@ -95,7 +108,7 @@ if ($RealExes) {
 
 $exeSize = (Get-Item (Join-Path $bin 'winux.exe')).Length
 Write-Host ''
-Write-Host ("Build complete: {0} commands, winux.exe {1:N0} bytes" -f $commands.Count, $exeSize) -ForegroundColor Green
+Write-Host ("Build complete: {0} commands, winux.exe {1:N0} bytes (version {2}, built {3})" -f $commands.Count, $exeSize, $commit, $buildTime) -ForegroundColor Green
 Write-Host ''
 Write-Host 'Enable the commands in a shell (winux.exe on PATH):' -ForegroundColor Yellow
 Write-Host ("  cmd.exe     :  for /f `"delims=`" %l in ('winux activate') do @%l   (exit: ... 'winux deactivate' ...)" )
