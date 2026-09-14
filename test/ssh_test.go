@@ -127,6 +127,23 @@ func TestSSHDExec(t *testing.T) {
 	}
 }
 
+// A client whose stdin is a pipe (a script, or `echo ls | wssh host`) cannot
+// use raw mode and hits EOF as soon as the input runs out; that must neither
+// panic nor stop the typed lines from running in the remote console.
+func TestWsshPipedStdinRunsRemoteShell(t *testing.T) {
+	addr, _ := startSSHD(t)
+	exe := buildWinuxExe(t)
+	cmd := exec.Command(exe, "wssh", "-p", "x", "tester@"+addr)
+	cmd.Stdin = strings.NewReader("echo piped-stdin-ok\nexit\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wssh with piped stdin failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "piped-stdin-ok") {
+		t.Fatalf("the piped line did not run remotely; output=%q", out)
+	}
+}
+
 func TestSSHDExecPipeline(t *testing.T) {
 	addr, _ := startSSHD(t)
 	client := sshDial(t, addr)

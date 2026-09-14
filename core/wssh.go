@@ -328,16 +328,19 @@ func wsshInteractive(session *ssh.Session) int {
 	}()
 	defer close(stopWatch)
 
-	done := make(chan struct{})
+	// stdin -> remote. The reader simply ends at EOF (a piped client, e.g.
+	// `echo ls | wssh host`); nothing waits on it, and the session ends when
+	// the remote shell does.
 	go func() {
 		buf := make([]byte, 8192)
 		for {
 			n, err := os.Stdin.Read(buf)
 			if n > 0 {
-				stdinPipe.Write(buf[:n])
+				if _, werr := stdinPipe.Write(buf[:n]); werr != nil {
+					return
+				}
 			}
 			if err != nil {
-				close(done)
 				return
 			}
 		}
@@ -355,7 +358,6 @@ func wsshInteractive(session *ssh.Session) int {
 	case <-copyDone:
 	case <-time.After(time.Second):
 	}
-	close(done)
 	return 0
 }
 

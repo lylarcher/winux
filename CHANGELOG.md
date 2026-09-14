@@ -22,6 +22,12 @@
     按 `(cols, rows)` 解构，导致 `RequestPty`/`WindowChange` 的行列颠倒
     （远端控制台尺寸错误、换行位置异常），已修正；远端 shell 结束后会等
     输出管道排空（最多 1s）再退出，不再吞掉最后几行输出。
+  - **`wssh` 管道 stdin 崩溃**：stdin 是管道时（`echo ls | wssh host`、
+    脚本喂命令），读线程到 EOF 与主流程各 `close(done)` 一次，正常跑完却以
+    `panic: close of closed channel`（退出码 2）收场；该 channel 无人等待，
+    现已删除，读线程遇 EOF/写失败直接返回。新增
+    `TestWsshPipedStdinRunsRemoteShell`（管道喂 `echo …` + `exit`，断言退出
+    码 0 且命令真的在远端执行）。
   - **`sh`**：REPL 读到的行去掉行尾 `\r`（控制台/CRLF 输入不再把 CR 带进
     最后一个参数）。
   - 测试：`core/ssh_conpty_test.go` 重写为**行为测试**——逐键输入必须被远端
