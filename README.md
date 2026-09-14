@@ -211,7 +211,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `ps` | `aux`/`-ef`/`-e`/`-p`/`-u`/`-C`/`-o`/`--sort`/`-t` 等；数据来自 WMI（`Get-CimInstance Win32_Process`），无外部依赖（见下「进程」） |
 | `netstat` | `-a -t -u -l -n -o -p tcp\|udp -e -i -r -s`；Windows 布局（`Proto Local Foreign State`） |
 | `ss` | `-a -t -u -l -n -p -e -o -m -s -r -i -4 -6`；Linux（iproute2）布局；与 netstat 读同一份内核套接字表 |
-| `ipconfig` | 默认直通系统 `ipconfig.exe`；`--help`/`--version` 为 winux 自带；`/release /renew /flushdns` 等改网操作被拒绝（见下「网络只读」） |
+| `ifconfig` | 默认直通系统 `ipconfig.exe`（别名 `ipconfig`）；`--help`/`--version` 为 winux 自带；`/release /renew /flushdns` 等改网操作被拒绝（见下「网络只读」） |
 | `ip` | `addr/link/route/neigh` 的 `show`（含 `-4 -6 -br -o`）；iproute2 输出风格；一切改网子命令（`addr add`、`link set`、`route add`…）拒绝并提示原生替代 |
 | `nmcli` | `device status/show`、`connection show`、`general status/permissions/hostname`；改网子命令拒绝（Windows 无 NetworkManager，列表由适配器推导） |
 | `nmtui` | 执行即调出 Windows「网络连接」面板（`ncpa.cpl`，对应 控制面板\网络和 Internet\网络连接）；`nmtui hostname` 打开「重命名这台电脑」设置页；`edit/connect` 同面板（见「网络命令（只读策略）」末尾） |
@@ -219,6 +219,8 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `mysql` | 纯 Go MySQL 客户端（**无需安装客户端**，仅 TCP）：`-h -P -u -p -D -e -B -N -t -r -E -v --connect-timeout -f`；交互 `mysql>`/`    ->` 提示、`;`/`\g`/`\G` 结束、`\q` 退出；支持 `mysql_native_password` 与 `caching_sha2_password`（含 RSA 公钥全认证） |
 | `redis-cli` | 纯 Go Redis 客户端（**无需安装客户端**）：`-h -p -a -n -r -i -d -x --raw -e --no-auth-warning --timeout`；交互 `host:port>` 提示，RESP2 回复格式化（`1) "val"`、`(integer)`、`(nil)`） |
 | `nc`/`netcat` | 纯 Go TCP/UDP 客户端与监听器：`-l -u -p -s -w -q -n -v -z -k -4 -6 -i`；stdin↔socket 双向转发、`-z` 端口扫描、`-k` 持续监听；`-e/-c`（连上后执行命令）因安全原因在 Windows 上拒绝（见「nc 说明」） |
+| `clickhouse` | 纯 Go ClickHouse 客户端（**无需安装 clickhouse-cli**，走 HTTP 接口）：`-h --port -u --password -d -q/-e -f -m --secure --timeout`；`clickhouse client` 风格、`-q`/stdin 批量、交互 REPL（见「clickhouse 说明」） |
+| `uptime` | 系统运行时长（`GetTickCount64` + 终端服务会话数）：默认 GNU 格式 `up 3 days, 4:05, 1 user, load average: N/A`；`-s` 启动时间、`-p` 友好格式；load average 为 Windows 无此概念，诚实显示 N/A |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -470,9 +472,9 @@ C> winux sh demo.sh（脚本文件里写）
 ## 网络命令（只读策略）
 
 网络命令分两类：**只读查询**（`netstat`、`ss`、`ip a/link/route/neigh show`、
-`nmcli device/connection show`、`ipconfig`）直接读取内核套接字/路由/适配器表
+`nmcli device/connection show`、`ifconfig`）直接读取内核套接字/路由/适配器表
 （iphlpapi 原生 API），**绝不改动网络配置**；**改动网络的子命令**（`ip addr add`、
-`ip link set`、`ip route add`、`nmcli device connect`、`ipconfig /release` 等）
+`ip link set`、`ip route add`、`nmcli device connect`、`ifconfig /release` 等）
 一律**拒绝**并给出原生替代（`netsh …`），防止误操作弄断网络：
 
 ```
@@ -484,8 +486,8 @@ Use the native equivalent when you really need it: netsh interface ipv4 add addr
 - `netstat` 采用 Windows 布局（`Proto  Local  Foreign  State`），`ss` 采用
   Linux（iproute2）布局（`State  Recv-Q  Send-Q  Local:Port  Peer:Port`），两者
   读同一份表。
-- `ipconfig` 默认直通系统 `ipconfig.exe`（`ipconfig /all` 可用），只有
-  `/release /renew /flushdns` 等改网参数被拒绝。
+- `ifconfig` 默认直通系统 `ipconfig.exe`（`ifconfig /all` 可用；`ipconfig`
+  是它的别名），只有 `/release /renew /flushdns` 等改网参数被拒绝。
 - `nmtui` 不做任何查询/修改：它直接调出 Windows 原生的**网络连接**面板
   （`control.exe ncpa.cpl`，即 控制面板\网络和 Internet\网络连接），把
   NetworkManager 文本界面的「连接管理」职责交给 Windows 图形界面（用户自己
@@ -548,22 +550,42 @@ stdin 与对端双向转发：
   且没有把 socket 绑到子进程 stdio 的原生可靠办法）——提示改用
   `winux sh -c` + 重定向。
 
+## clickhouse 说明
+
+`clickhouse` 是 winux 内置的纯 Go ClickHouse 客户端（**无需安装
+clickhouse-cli**），走 **HTTP 接口**（默认 `localhost:8123`），SQL 以
+`X-ClickHouse-User`/`X-ClickHouse-Key` 头认证，`database`/`default_format`
+参数选库与决定输出格式：
+
+- **连接选项**：`-h/--host`（默认 localhost）、`--port`（默认 8123；
+  `--secure` 切 HTTPS 且默认端口变 8443）、`-u/--user`（默认 default）、
+  `--password`（可 `--password=SECRET` 或 `--password SECRET`；裸写时交互
+  隐藏输入）、`-d/--database`（默认 default）、`--timeout SECS`（默认 30）。
+- **执行方式**：`-q/--query "SQL"`（可重复，多条自动按语句切分逐条执行）、
+  `-e/--execute` 同义；或 `echo "SELECT 1" | clickhouse`（stdin 管道）；
+  或 `clickhouse client`（clickhouse-cli 风格）进入**交互 REPL**
+  （`host:8123>` 提示，默认一行一条查询，`-m/--multiline` 改为累积到 `;`；
+  `\q`/`exit` 退出）。
+- **输出格式**：`-f/--format` 显式指定（Pretty、TSV、CSV、JSON…）；未指定时
+  终端用 `PrettyCompact`、管道/重定向用 `TabSeparated`；SQL 里自带
+  `FORMAT X` 时以 SQL 为准（服务端行为）。
+
 ## 构建与测试
 
 ```powershell
 # 单元测试（flags、glob/tilde 展开、cp/rm/mv/mkdir/touch/ls、grep 上下文、
 #            head/tail/wc/sort/uniq/cut/tr、pager/vi 内部逻辑、date 解析、
-#            chmod/cal、ps；netstat/ss、ip/nmcli/ipconfig 等网络用例默认跳过，
-#            见「网络命令（只读策略）」）
+#            chmod/cal、ps、nc 回环、clickhouse 假 HTTP 端；netstat/ss、
+#            ip/nmcli/ifconfig 等网络用例默认跳过，见「网络命令（只读策略）」）
 go test ./...
 
 # 一键构建 + 垫片 + 激活脚本
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，198 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，211 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
-# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ipconfig，在 192 项之上增加）
+# 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ifconfig，在常规项之上增加）
 # ——需要你确认只读后使用
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 ```
@@ -593,7 +615,7 @@ winux/
 │  ├─ cal.go         cal 日历
 │  ├─ proc.go        ps（+ proc_windows.go 的 WMI 快照与属主解析）
 │  ├─ netstat.go     netstat / ss（+ net_windows.go 的 iphlpapi 表读取）
-│  ├─ ip.go          ipconfig / ip / nmcli / nmtui（+ ip_windows.go 适配器列表）
+│  ├─ ip.go          ifconfig / ip / nmcli / nmtui（+ ip_windows.go 适配器列表）
 │  ├─ activate.go      winux activate/deactivate（父进程识别含垫片穿透，winux- 前缀）
 │  ├─ shimgen.go       内嵌垫片解压（md5 增量）+ winux shims（+ shimdata/ 模板）
 │  ├─ term_windows.go  控制台原始模式、按键解码、终端尺寸（Windows）
@@ -601,6 +623,8 @@ winux/
 │  ├─ mysql.go         mysql 纯 Go 客户端（握手/RSA 认证/交互 REPL）
 │  ├─ redis.go         redis-cli 纯 Go 客户端（RESP2/交互 REPL）
 │  ├─ nc.go            nc / netcat（TCP/UDP 连接与监听，stdin 双向转发）
+│  ├─ clickhouse.go    clickhouse 纯 Go 客户端（HTTP 接口/交互 REPL）
+│  ├─ uptime.go        uptime（+ uptime_windows.go：GetTickCount64/WTS 会话数）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）
 ├─ .gitignore       忽略构建产物（bin/、winux.exe 等）

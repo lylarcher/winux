@@ -201,6 +201,14 @@ try {
     }
     Check 'whoami prints a user name' ((Text (whoami)).Length -gt 0)
     Check 'hostname prints something' ((Text (hostname)).Length -gt 0)
+
+    $upOut = Text (& $winux uptime)
+    Check 'uptime prints a GNU-style "up ..." line' ($upOut -match 'up \d+ (min|minutes|hours?|days?)') $upOut
+    $upSince = Text (& $winux uptime -s)
+    Check 'uptime -s prints the boot time' ($upSince -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$') $upSince
+    $upPretty = Text (& $winux uptime -p)
+    Check 'uptime -p prints a pretty duration' ($upPretty -match '^up ') $upPretty
+
     Check 'ln -s / ln create links' ((Text (& $winux ln -v src/a.txt hardlink.txt)) -match 'hardlink' -or (Test-Path hardlink.txt))
 
     # ----------------------------------------- direct invocation and help ----
@@ -213,7 +221,7 @@ try {
     Check 'global help lists the commands' ($help -match 'cp' -and $help -match 'grep' -and $help -match 'vi')
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat')) {
+            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -231,6 +239,9 @@ try {
         ((Text (& $winux tcpdump -r $onePcap)) -match 'IP 192\.168\.1\.5\.4660 > 8\.8\.8\.8\.53: UDP')
     $code = Invoke-CmdLine "`"${winux}`" tcpdump -r missing.pcap >nul 2>&1"
     Check 'tcpdump -r fails cleanly for a missing file' ($code -eq 1) "exit=$code"
+
+    $code = Invoke-CmdLine "`"${winux}`" clickhouse -h 127.0.0.1 --port 1 --timeout 2 -q 'SELECT 1' >nul 2>&1"
+    Check 'clickhouse reports a connection failure without a server' ($code -eq 1) "exit=$code"
 
     # ------------------------------------------------------- nc / netcat ----
     $code = Invoke-CmdLine "`"${winux}`" nc >nul 2>&1"
@@ -577,10 +588,11 @@ Write-Output 'ps-coexist-ok'
         Check 'ip route shows a default route' ((Text (& $winux ip r)) -match 'default|dev')
         Check 'nmcli lists devices' ((Text (& $winux nmcli)) -match 'DEVICE')
         Check 'ipconfig prints the configuration' ((Text (& $winux ipconfig)) -match 'IP')
+        Check 'ifconfig (alias) prints the configuration too' ((Text (& $winux ifconfig)) -match 'IP')
         $code = Invoke-CmdLine "`"${shims}\ip.cmd`" addr add 9.9.9.9/32 dev x >nul 2>&1"
         Check 'ip addr add is refused (read-only policy)' ($code -eq 1) "exit=$code"
-        $code = Invoke-CmdLine "`"${shims}\ipconfig.cmd`" /release >nul 2>&1"
-        Check 'ipconfig /release is refused (read-only policy)' ($code -eq 1) "exit=$code"
+        $code = Invoke-CmdLine "`"${shims}\ifconfig.cmd`" /release >nul 2>&1"
+        Check 'ifconfig /release is refused (read-only policy)' ($code -eq 1) "exit=$code"
     } else {
         Write-Host '  SKIP  network section (pass -Network, after explicit consent, to run the read-only network checks)'
         $script:pass++

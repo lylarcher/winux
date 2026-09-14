@@ -3,6 +3,28 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 新增 `uptime`、`clickhouse`，`ipconfig` 改名 `ifconfig`**：
+  - **`ipconfig` → `ifconfig`**（Linux 风格名，`ipconfig` 保留为别名，两个
+    垫片都在）：命令行为不变（默认直通系统 `ipconfig.exe`，改网参数拒绝）。
+  - **`uptime`**：GNU 格式 `HH:MM:SS up N days, H:MM, N user(s), load
+    average: N/A`——时长来自 `GetTickCount64`，用户数来自终端服务会话枚举
+    （WTS，活跃 RDP/控制台会话，排除 services 会话 0）；`-s` 打印启动时间、
+    `-p` 友好格式。Windows 没有 1/5/15 分钟负载均值，诚实显示 N/A 并在
+    stderr 说明，不伪造数字。`uptime_other.go` 保证 linux/darwin 交叉编译。
+  - **`clickhouse`**：纯 Go 客户端走 **HTTP 接口**（默认 `localhost:8123`，
+    `--secure` 切 HTTPS/8443），无需安装 clickhouse-cli。选项
+    `-h/--host -u/--user --password -d/--database -q/--query -e/--execute
+    -f/--format -m/--multiline --port --timeout --secure`；`X-ClickHouse-User/
+    Key` 头认证 + `database`/`default_format` 参数；`-q` 可重复、多条按语句
+    切分（引号感知，复用 mysql 的 splitExecStatements）；stdin 管道批量；
+    `clickhouse client` 交互 REPL（默认一行一条查询，`-m` 累积到 `;`）。
+    输出格式默认终端 PrettyCompact、管道 TabSeparated，`-f` 覆盖。单测
+    `test/clickhouse_test.go` 用 httptest 假服务器覆盖请求形状（方法/头/
+    参数/切分）、错误码 60 透传、连接失败与参数校验，全绿。
+  - build.ps1 命令表 57→60，smoke 新增 uptime（3）、ifconfig 别名、
+    clickhouse 连接失败、help 循环 +3 共 8 项断言；README 命令表、clickhouse
+    说明节、目录结构同步更新。
+
 - **2026-09-12 · 修复 PowerShell 会话反激活不彻底**：`winux-deactivate` /
   `winux-activate` 在 PowerShell 里原本解析到 cmd\ 的批处理垫片，只在子
   cmd.exe 里还原 cmd 侧状态，导致「提示 deactivated 但 `(winux)` 提示符前缀

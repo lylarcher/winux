@@ -33,11 +33,11 @@ $null = New-Item -ItemType Directory -Force -Path $bin
 # themselves are derived from the binary's command table by `winux shims`.
 $commands = @(
     'cal', 'cat', 'cd', 'chgrp', 'chmod', 'chown', 'clear', 'cp', 'cut', 'date', 'df', 'du', 'echo',
-    'grep', 'groupadd', 'groupdel', 'head', 'hostname', 'id', 'ip', 'ipconfig', 'less', 'ln',
+    'grep', 'groupadd', 'groupdel', 'head', 'hostname', 'id', 'ip', 'ifconfig', 'ipconfig', 'less', 'ln',
     'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sh', 'sort', 'ss',
-    'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'useradd', 'userdel', 'usermod',
+    'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'uptime', 'useradd', 'userdel', 'usermod',
     'passwd', 'vi', 'vim', 'wc', 'which', 'whoami',
-    'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat'
+    'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse'
 )
 
 $env:GOTELEMETRY = 'off'

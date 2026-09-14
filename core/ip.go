@@ -17,7 +17,7 @@ import (
 )
 
 func init() {
-	addCmd("ipconfig", "display IP configuration (wraps ipconfig.exe)", cmdIpconfig)
+	addCmd("ifconfig", "display IP configuration (wraps ipconfig.exe; alias: ipconfig)", cmdIpconfig, "ipconfig")
 	addCmd("ip", "show/manipulate network interfaces and routing (read-only)", cmdIp)
 	addCmd("nmcli", "query network devices and connections (NetworkManager style)", cmdNmcli)
 	addCmd("nmtui", "open the Windows Network Connections panel (ncpa.cpl)", cmdNmtui)
@@ -32,7 +32,7 @@ func cmdIpconfig(args []string) int {
 	// --help/--version are winux's own; everything else goes to ipconfig.exe
 	for _, a := range args {
 		if a == "--help" || a == "-h" || a == "/?" || a == "-?" {
-			fmt.Println("Usage: ipconfig [OPTION]...")
+			fmt.Println("Usage: ifconfig [OPTION]...   (alias: ipconfig)")
 			fmt.Println("Query or configure IP configuration (passes through to ipconfig.exe).")
 			fmt.Println("")
 			fmt.Println("  /all          display full configuration")
@@ -45,7 +45,7 @@ func cmdIpconfig(args []string) int {
 			return 0
 		}
 		if a == "--version" || a == "-V" {
-			fmt.Println("ipconfig " + Version)
+			fmt.Println("ifconfig " + Version)
 			return 0
 		}
 	}
@@ -53,7 +53,7 @@ func cmdIpconfig(args []string) int {
 		la := strings.ToLower(a)
 		if la == "/release" || la == "/renew" || la == "/flushdns" || la == "/registerdns" ||
 			la == "/release6" || la == "/renew6" || la == "/setclassid" || la == "/setdns" {
-			fmt.Fprintf(os.Stderr, "ipconfig: %s changes the network state and is refused; run ipconfig.exe directly if you need it\n", a)
+			fmt.Fprintf(os.Stderr, "ifconfig: %s changes the network state and is refused; run ipconfig.exe directly if you need it\n", a)
 			return 1
 		}
 	}
@@ -549,7 +549,7 @@ func cmdNmtui(args []string) int {
 		fmt.Println("nmtui: opening Network Connections (控制面板\\网络和 Internet\\网络连接, ncpa.cpl)")
 		if err := launchDetached("control.exe", "ncpa.cpl"); err != nil {
 			warn("nmtui", "cannot open the Network Connections panel: %v", err)
-			fmt.Fprintln(os.Stderr, "nmtui: use `ipconfig`, `ip addr` or `nmcli device status` in a terminal instead")
+			fmt.Fprintln(os.Stderr, "nmtui: use `ifconfig`, `ip addr` or `nmcli device status` in a terminal instead")
 			return 1
 		}
 		return 0
