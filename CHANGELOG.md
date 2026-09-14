@@ -3,6 +3,16 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · systemctl 内置单元自愈：winux.exe 换路径后自动重同步**：
+  - 物化的 `winux-sshd.service` 里 ExecStart 是**绝对路径**（物化时的
+    winux.exe）。把 winux.exe 拷到新位置后，旧文件仍指向旧路径（如
+    `D:\AIWorkSpace\...\bin\winux.exe`），服务实际从旧路径启动。
+  - 修复：`sysResolveTarget` 对内置单元每次尝试用**当前运行的 exe**
+    重写物化文件并重新加载（管理员下自动；status 非管理员显示失配时
+    提示 `sudo systemctl daemon-reload`）；`daemon-reload` 开头重写内置
+    单元并顺带修正服务的 binPath（指向当前 winux.exe）。
+  - 用法：换了 winux.exe 位置后执行 `sudo systemctl daemon-reload`
+    + `sudo systemctl restart sshd` 即可。
 - **2026-09-14 · sudo 提权输出回显（sudo systemctl 不再静默失败）**：
   - 根因：`Start-Process -Verb RunAs` 启动的提权进程运行在**独立控制台**，
     其 stdout/stderr 用户不可见；加上此前"内部命令失败静默返回退出码"，

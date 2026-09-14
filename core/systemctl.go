@@ -865,15 +865,20 @@ func sysResolveTarget(name string) (unit *sysUnit, rt *sysRuntime, st *sysUnitSt
 			return nil, nil, nil, e
 		}
 	}
-	if unit == nil {
-		// built-in units (e.g. winux-sshd) get materialized as real unit
-		// files when writable; otherwise the in-memory definition still works
-		// for read-only commands like status.
-		if u := sysBuiltinUnit(name); u != nil {
-			unit = u
-			if p := sysMaterializeBuiltin(name); p != "" {
-				unit.Path = p
-				unit.Hash = sha256Hex([]byte(sysBuiltinUnitText(u)))
+	if sysBuiltinUnit(name) != nil {
+		// Built-in units (winux-sshd) carry an absolute ExecStart pointing at
+		// the winux.exe that materialized them. If that binary has moved
+		// (D:\my-tools\...), rewrite the file with the running exe and reload
+		// it, so the service always starts the winux the user is actually
+		// running. Writable only when elevated; otherwise status shows the
+		// stale path and hints at `sudo systemctl daemon-reload`.
+		if mp := sysMaterializeBuiltin(name); mp != "" {
+			if unit == nil || unit.Path != mp || unit.ExecStart != sysBuiltinUnit(name).ExecStart {
+				if u2, e2 := sysLoadUnit(mp); e2 == nil {
+					unit = u2
+				} else {
+					return nil, nil, nil, e2
+				}
 			}
 		}
 	}
@@ -1270,6 +1275,9 @@ func sysSetEnabled(rt *sysRuntime, name string, enabled bool) error {
 }
 
 func sysCmdDaemonReload(dryRun, adopt bool, code *int) {
+	// Keep the built-in unit files (winux-sshd) in sync with the running
+	// winux.exe before scanning, so a moved binary is picked up.
+	sysMaterializeBuiltin("winux-sshd")
 	units := map[string]*sysUnit{}
 	for _, dir := range sysUnitDirs() {
 		entries, err := os.ReadDir(dir)
@@ -1423,6 +1431,9 @@ func sysCmdStatus(name string, full bool, code *int) {
 		if u != nil {
 			fmt.Printf("  ExecStart: %s\n", u.ExecStart)
 		}
+	}
+	if u != nil && sysBuiltinUnit(name) != nil && u.ExecStart != sysBuiltinUnit(name).ExecStart {
+		fmt.Printf("   NOTE: the built-in unit's ExecStart points at a different winux.exe — run 'sudo systemctl daemon-reload' to resync it to the current binary\n")
 	}
 	if sysTestMasked(name) {
 		fmt.Printf("    Masked: yes\n")
