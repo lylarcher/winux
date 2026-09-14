@@ -273,8 +273,8 @@ func wsshRunCommand(session *ssh.Session, command string) int {
 
 func wsshInteractive(session *ssh.Session) int {
 	// Request a pty sized to the local console, enter raw mode, then bridge
-	// bytes both ways.
-	cols, rows := terminalSize()
+	// bytes both ways. terminalSize reports rows first.
+	rows, cols := terminalSize()
 	if cols <= 0 {
 		cols = 80
 	}
@@ -318,7 +318,7 @@ func wsshInteractive(session *ssh.Session) int {
 			case <-stopWatch:
 				return
 			case <-t.C:
-				c, r := terminalSize()
+				r, c := terminalSize()
 				if c > 0 && r > 0 && (c != lastCols || r != lastRows) {
 					session.WindowChange(r, c)
 					lastCols, lastRows = c, r
@@ -343,11 +343,19 @@ func wsshInteractive(session *ssh.Session) int {
 		}
 	}()
 
-	go io.Copy(os.Stdout, stdout)
+	copyDone := make(chan struct{})
+	go func() {
+		io.Copy(os.Stdout, stdout)
+		close(copyDone)
+	}()
 
 	session.Wait()
+	// let the output pump flush whatever the remote shell sent on its way out
+	select {
+	case <-copyDone:
+	case <-time.After(time.Second):
+	}
 	close(done)
-	restore()
 	return 0
 }
 

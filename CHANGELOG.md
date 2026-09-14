@@ -3,6 +3,35 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 修复 wssh/ssh 登录后卡在 `sh>`（按键无效、无回显）**：
+  - **根因在服务端 ConPTY 接线**：`CreatePseudoConsole` 的 `hInput`/`hOutput`
+    被传成了**服务端自己用的那两头**（`inW`/`outR`），也就是官方文档与所有
+    ConPTY 封装都反着用；同时子进程用 `STARTF_USESTDHANDLES` 把标准句柄
+    换成了裸管道。结果是：输出能出来（走的是继承的 std 管道），但伪控制台
+    **一个按键都收不到**——没有回显、没有行编辑、Enter 也无效，客户端却又
+    进了 raw 模式，于是「提示符在、打字没反应、Ctrl+C 也退不出」。
+    现在按文档接线：控制台读 `inR`（输入管道读端）、写 `outW`（输出管道
+    写端），我们继续写 `inW`、读 `outR`；子进程 `STARTF_USESTDHANDLES`
+    句柄留空、`bInheritHandles=false`、不再加 `CREATE_NEW_PROCESS_GROUP`，
+    由伪控制台提供 CONIN$/CONOUT$。
+  - **CR/LF**：控制台只认回车（CR）结束一行，客户端/脚本常发裸 `\n`，
+    这种输入会永远躺在控制台输入缓冲区里。服务端新增
+    `sshConsoleInput()` 把「前面不是 CR 的 LF」翻译成 CR（CRLF 原样保留），
+    因此 `echo x\n` 这种脚本式喂入与真人按 Enter 都能执行。
+  - **客户端 `wssh`**：`terminalSize()` 返回的是 `(rows, cols)`，交互模式却
+    按 `(cols, rows)` 解构，导致 `RequestPty`/`WindowChange` 的行列颠倒
+    （远端控制台尺寸错误、换行位置异常），已修正；远端 shell 结束后会等
+    输出管道排空（最多 1s）再退出，不再吞掉最后几行输出。
+  - **`sh`**：REPL 读到的行去掉行尾 `\r`（控制台/CRLF 输入不再把 CR 带进
+    最后一个参数）。
+  - 测试：`core/ssh_conpty_test.go` 重写为**行为测试**——逐键输入必须被远端
+    控制台回显、按 Enter（CR）必须执行该行、LF 结尾的脚本同样执行、最后
+    `exit` 正常退出；新增 `TestWsshInteractiveInRealConsole`：后台起真
+    `winux sshd`，再在**真控制台**（自建 ConPTY）里跑 `winux.exe wssh`，
+    逐键输入 → 远端回显 → Enter 执行 → `exit` 退出，端到端复现用户场景。
+    `test/ssh_test.go` 新增 `TestSSHShellPTYInteractive`（pty 会话逐键回显），
+    `TestSSHShellPTY` 断言收紧为匹配整行输出（原先只看子串，回显即可蒙混）。
+
 - **2026-09-14 · systemctl 生命周期对齐 systemd（restart 无需先 start、disable 不阻止 start）；新增 `lsof`；修复 IPv6 套接字表解析**：
   - **systemctl 生命周期语义**（此前是 SCM 语义，与 systemd 不一致）：
     - `restart` 不再无条件先 stop：只在单元**正在运行**时才停，对**已停止**

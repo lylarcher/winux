@@ -10,6 +10,7 @@ package core
 // declared directly against kernel32 (same style as term_windows.go).
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -36,7 +37,6 @@ const (
 	procThreadAttributePseudoConsole = 0x00020016
 	extendedStartupinfoPresent       = 0x00080000
 	startfUseStdHandles              = 0x00000100
-	createNewProcessGroup            = 0x00000200
 	infinite                         = 0xFFFFFFFF
 )
 
@@ -86,6 +86,13 @@ func conptyAvailable() bool {
 
 // newSSHConPTY spawns winux sh attached to a fresh pseudo console.
 func newSSHConPTY(cols, rows uint16) (*sshConPTY, error) {
+	// -i keeps the REPL explicit: sh otherwise infers interactivity from the
+	// standard handles, which a pseudo console does not always make visible.
+	return newConPTYCmd(`"`+sshChildExe()+`" sh -i`, cols, rows)
+}
+
+// newConPTYCmd starts an arbitrary command line inside a fresh pseudo console.
+func newConPTYCmd(cmdline string, cols, rows uint16) (*sshConPTY, error) {
 	if !conptyAvailable() {
 		return nil, fmt.Errorf("pseudo console requires Windows 10 1809+")
 	}
@@ -106,14 +113,18 @@ func newSSHConPTY(cols, rows uint16) (*sshConPTY, error) {
 		return nil, err
 	}
 	var pc uintptr
-	// CreatePseudoConsole returns an HRESULT: S_OK is 0, failures are negative.
-	// MSDN says hInput is read by the console and hOutput written by it, but
-	// empirically (and per microsoft/terminal's ConPTY sample) the API wants
-	// the ends the SERVER uses: hInput = the pipe write end we push user input
-	// into (inW), hOutput = the pipe read end we drain console output from
-	// (outR). size is passed BY VALUE.
+	// CreatePseudoConsole(size, hInput, hOutput): the console READS the user's
+	// keystrokes from hInput and WRITES its screen to hOutput, so it is given
+	// the read end of the input pipe and the write end of the output pipe —
+	// the wiring used by Microsoft's ConPTY sample and by every ConPTY
+	// wrapper. (Passing the other ends instead, as this code once did, still
+	// let output through — it flowed over the child's inherited std handles —
+	// but the console never saw a single keystroke: no echo, no line editing,
+	// nothing typed ever reached the remote shell.) We keep the opposite ends:
+	// inW to push input in, outR to drain output.
+	// size is passed BY VALUE.
 	if r, _, _ := procCreatePseudoConsole.Call(
-		sshCoordBits(cols, rows), inW, outR, 0, uintptr(unsafe.Pointer(&pc))); int32(r) < 0 {
+		sshCoordBits(cols, rows), inR, outW, 0, uintptr(unsafe.Pointer(&pc))); int32(r) < 0 {
 		procCloseHandle.Call(inR)
 		procCloseHandle.Call(inW)
 		procCloseHandle.Call(outR)
@@ -121,9 +132,8 @@ func newSSHConPTY(cols, rows uint16) (*sshConPTY, error) {
 		return nil, fmt.Errorf("CreatePseudoConsole failed (hresult 0x%x)", uint32(int32(r)))
 	}
 
-	// -i forces the REPL: inside a pseudo console the standard handles are
-	// plain pipes, so sh would otherwise read stdin to EOF and never exit.
-	cmdline := syscall.StringToUTF16Ptr(`"` + sshChildExe() + `" sh -i`)
+	// The child command line, given by the caller (the sshd shell or a test).
+	cmdlinePtr := syscall.StringToUTF16Ptr(cmdline)
 
 	// Proc-thread attribute list carrying the pseudo console handle.
 	var attrSize uintptr
@@ -152,21 +162,24 @@ func newSSHConPTY(cols, rows uint16) (*sshConPTY, error) {
 
 	var si sshStartupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
+	// STARTF_USESTDHANDLES with the handles left NULL: the process is attached
+	// to the pseudo console through the attribute list above, and the OS then
+	// gives it the console handles as its standard handles. Handing it our raw
+	// pipes instead (the previous wiring) meant no echo and no line editing —
+	// and keystrokes that only ever completed a line on '\n', never on the
+	// Enter key, which sends '\r'.
 	si.Flags = extendedStartupinfoPresent | startfUseStdHandles
 	si.AttributeList = attrList
-	si.StdInput = inR
-	si.StdOutput = outW
-	si.StdErr = outW
 	var pi sshProcessInformation
-	if r, _, _ := procCreateProcessW.Call(0, uintptr(unsafe.Pointer(cmdline)), 0, 0, 1,
-		createNewProcessGroup, 0, 0, uintptr(unsafe.Pointer(&si)), uintptr(unsafe.Pointer(&pi))); r == 0 {
+	if r, _, callErr := procCreateProcessW.Call(0, uintptr(unsafe.Pointer(cmdlinePtr)), 0, 0, 0,
+		extendedStartupinfoPresent, 0, 0, uintptr(unsafe.Pointer(&si)), uintptr(unsafe.Pointer(&pi))); r == 0 {
 		procDeleteProcThreadAttributeList.Call(attrList)
 		procClosePseudoConsole.Call(pc)
 		procCloseHandle.Call(inR)
 		procCloseHandle.Call(inW)
 		procCloseHandle.Call(outR)
 		procCloseHandle.Call(outW)
-		return nil, fmt.Errorf("CreateProcess failed (error %d)", sshLastError())
+		return nil, fmt.Errorf("CreateProcess failed (error %d)", uint32(callErr.(syscall.Errno)))
 	}
 	procCloseHandle.Call(pi.Thread)
 	procDeleteProcThreadAttributeList.Call(attrList)
@@ -208,7 +221,7 @@ func (p *sshConPTY) writeStdin(r io.Reader) error {
 		n, err := r.Read(buf)
 		if n > 0 {
 			debugLogf("conpty: stdin %d bytes: %q", n, buf[:n])
-			if e := p.writeInput(buf[:n]); e != nil {
+			if e := p.writeInput(sshConsoleInput(buf[:n])); e != nil {
 				debugLogf("conpty: writeInput error: %v", e)
 				return e
 			}
@@ -217,6 +230,26 @@ func (p *sshConPTY) writeStdin(r io.Reader) error {
 			return err
 		}
 	}
+}
+
+// sshConsoleInput adapts the byte stream to the console's line discipline: the
+// Enter key of a real terminal is a carriage return, and a console only ends a
+// line on CR — a bare line feed (what a script or a pipe-style client sends)
+// would otherwise sit in the console's input buffer forever, leaving a remote
+// shell that looks connected but ignores everything typed. CRLF is left alone.
+func sshConsoleInput(data []byte) []byte {
+	if !bytes.ContainsRune(data, '\n') {
+		return data
+	}
+	out := make([]byte, 0, len(data))
+	for i, b := range data {
+		if b == '\n' && (i == 0 || data[i-1] != '\r') {
+			out = append(out, '\r')
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 func debugLogf(format string, args ...interface{}) {

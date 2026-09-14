@@ -921,7 +921,8 @@ func shRepl(ctx *shCtx) int {
 	// a small pipe that lets the REPL feed heredoc bodies to shRunLines
 	fmt.Print("sh> ")
 	for sc.Scan() {
-		line := sc.Text()
+		// a console (or a CRLF file) ends the line with CRLF
+		line := strings.TrimRight(sc.Text(), "\r")
 		if strings.TrimSpace(line) == "" {
 			fmt.Print("sh> ")
 			continue

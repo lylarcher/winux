@@ -731,8 +731,13 @@ Windows 上**不需要安装 OpenSSH 组件**。
   仅限双方机器上的本地用户）；`--auth any` 接受任意密码（仅测试/内网）。
   连入后就是 winux 环境：SSH exec 请求跑 `winux sh -c <cmd>`（管道、重定向、
   `&&` 全可用），shell 请求挂一个 ConPTY 伪控制台跑 `winux sh`（交互 REPL，
-  支持终端尺寸变更）。host key（ed25519）首次运行自动生成在
-  `%ProgramData%\winux\sshd_host_ed25519`（不可写时回退
+  支持终端尺寸变更、按键回显与行编辑）。伪控制台按官方文档接线：控制台从
+  输入管道的**读端**取用户按键、向输出管道的**写端**写屏（`CreatePseudoConsole`
+  传 `inR`/`outW`），子进程不再用管道顶替标准句柄（`STARTF_USESTDHANDLES`
+  且句柄留空，由控制台提供 CONIN$/CONOUT$）——接反或顶替会让远端「有提示符
+  但按键无效」，详见 CHANGELOG。客户端送来的裸 `\n` 会被翻译成回车（控制台
+  只认 CR 结束一行），所以脚本式一次性喂入也能执行。host key（ed25519）
+  首次运行自动生成在 `%ProgramData%\winux\sshd_host_ed25519`（不可写时回退
   `%LOCALAPPDATA%\winux`）。
 - **服务安装**：`winux sshd --install` 以管理员注册并启动 **winux-sshd**
   服务（`--uninstall` 移除），也可直接用
@@ -741,13 +746,15 @@ Windows 上**不需要安装 OpenSSH 组件**。
   `--log FILE`）。
 - **客户端 `wssh`**：`winux wssh [-p 密码] [-P 端口] [-l 用户] user@host[:port] [command]`
   ——不给命令进交互 shell（请求远端 pty，本机进入 raw 模式，窗口变化自动
-  推送 `window-change`）；给命令则执行并透传退出码。默认端口 1022；
+  推送 `window-change`，pty 尺寸按本机控制台的实际行列上报）；给命令则执行
+  并透传退出码。默认端口 1022；
   连 OpenSSH 服务器用 `-P 22`。认证支持 password 与 keyboard-interactive
   （连那些只开键盘交互的服务器也能用）；`--timeout SECS`（默认 15）覆盖
   **整个连接+握手+认证过程**——服务器握手阶段无响应时不会无限挂起。
   `-v` 打印连接/认证阶段日志便于排障。两台的 winux 互相连接：本机
   `winux sshd`（或装成服务），另一台 `winux wssh 对方IP`（激活环境后直接
-  `wssh`）。
+  `wssh`）。交互会话里 Ctrl+C 会**转发给远端**（和 Linux 的 ssh 一样，用来
+  打断远端命令），要退出远端 shell 就输入 `exit`（或让远端 shell 结束）。
 
 ## 构建与测试
 
