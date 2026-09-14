@@ -8,6 +8,7 @@ package core_test
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -247,6 +248,46 @@ func TestWsshConnectionRefused(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "wssh:") {
 		t.Fatalf("stderr=%q", errOut)
+	}
+}
+
+// A server that accepts the TCP connection but never speaks SSH must not hang
+// wssh forever: the handshake deadline (--timeout) has to kick in.
+func TestWsshHandshakeTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				time.Sleep(30 * time.Second) // hold the connection open, stay silent
+				conn.Close()
+			}(c)
+		}
+	}()
+
+	start := time.Now()
+	code, _, errOut := core.Execute("wssh",
+		[]string{"-p", "x", "tester@" + ln.Addr().String(), "--timeout", "2", "echo hi"},
+		strings.NewReader(""))
+	elapsed := time.Since(start)
+	if code != 1 {
+		t.Fatalf("code=%d want 1 stderr=%q", code, errOut)
+	}
+	if !strings.Contains(errOut, "wssh:") {
+		t.Fatalf("stderr=%q", errOut)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("wssh hung for %s before timing out (stderr=%q)", elapsed, errOut)
+	}
+	if elapsed < 1500*time.Millisecond {
+		t.Fatalf("wssh failed too fast (%s); the handshake deadline did not apply", elapsed)
 	}
 }
 

@@ -70,6 +70,7 @@ func Main() {
 		} else {
 			fmt.Printf("%s %s\n", progName, Version)
 		}
+		fmt.Printf("from: %s\n", exePath())
 		os.Exit(0)
 	}
 
@@ -147,9 +148,19 @@ func printUsage(name, argSpec string, f *Flags) {
 func printVersion(name string) {
 	if BuildTime != "" {
 		fmt.Printf("%s (%s) %s (built %s)\n", name, progName, Version, BuildTime)
-		return
+	} else {
+		fmt.Printf("%s (%s) %s\n", name, progName, Version)
 	}
-	fmt.Printf("%s (%s) %s\n", name, progName, Version)
+	fmt.Printf("from: %s\n", exePath())
+}
+
+// exePath returns the full path of the running winux.exe binary.
+func exePath() string {
+	p, err := os.Executable()
+	if err != nil {
+		return "<unknown>"
+	}
+	return p
 }
 
 // parseOrDie parses args and reports option errors the way GNU tools do.

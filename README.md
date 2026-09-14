@@ -661,8 +661,14 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
   单元）、`list-units`/`list-unit-files`、`mask/unmask NAME`、
   `journalctl -u NAME [-n N] [-f] [-r] [--since TIME]`、`daemon-reload`。
   变更类命令需要管理员权限（会先检查令牌并明确提示）。
+- **内置单元 `sshd`**：winux 的 SSH 服务端是内置单元，无需手写
+  .service 文件——`systemctl status sshd` / `start sshd` / `cat sshd`
+  直接可用（内部映射到服务名 **winux-sshd**，首次使用自动物化单元文件
+  到 `%ProgramData%\systemctl\units\winux-sshd.service`；只读命令在非
+  管理员下也能解析，变更命令用 `winux sudo systemctl ...`）。
 - **示例**：把 winux sshd 装成开机自启服务
-  `winux sshd --install`（等价于一条 systemctl 单元 + enable）。
+  `winux sudo systemctl enable sshd` + `start sshd`
+  （或等价的 `winux sshd --install`，两者管理同一个 winux-sshd 服务）。
 
 ## sshd / wssh 说明
 
@@ -678,13 +684,17 @@ Windows 上**不需要安装 OpenSSH 组件**。
   `%ProgramData%\winux\sshd_host_ed25519`（不可写时回退
   `%LOCALAPPDATA%\winux`）。
 - **服务安装**：`winux sshd --install` 以管理员注册并启动 **winux-sshd**
-  服务（`--uninstall` 移除），之后可用
-  `winux systemctl status winux-sshd` / `restart` / `journalctl -u winux-sshd`
-  管理。前台跑 `winux sshd` 即可（`--port N`、`--listen HOST`、`--log FILE`）。
+  服务（`--uninstall` 移除），也可直接用
+  `winux sudo systemctl start sshd` / `status sshd` / `journalctl -u sshd`
+  管理同一个服务。前台跑 `winux sshd` 即可（`--port N`、`--listen HOST`、
+  `--log FILE`）。
 - **客户端 `wssh`**：`winux wssh [-p 密码] [-P 端口] [-l 用户] user@host[:port] [command]`
   ——不给命令进交互 shell（请求远端 pty，本机进入 raw 模式，窗口变化自动
   推送 `window-change`）；给命令则执行并透传退出码。默认端口 1022；
-  连 OpenSSH 服务器用 `-P 22`。两台的 winux 互相连接：本机
+  连 OpenSSH 服务器用 `-P 22`。认证支持 password 与 keyboard-interactive
+  （连那些只开键盘交互的服务器也能用）；`--timeout SECS`（默认 15）覆盖
+  **整个连接+握手+认证过程**——服务器握手阶段无响应时不会无限挂起。
+  `-v` 打印连接/认证阶段日志便于排障。两台的 winux 互相连接：本机
   `winux sshd`（或装成服务），另一台 `winux wssh 对方IP`（激活环境后直接
   `wssh`）。
 

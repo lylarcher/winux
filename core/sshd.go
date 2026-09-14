@@ -187,6 +187,7 @@ func cmdSshd(args []string) int {
 			return 0
 		case a == "--version" || a == "-v":
 			fmt.Printf("winux sshd %s (pure-Go SSH server)\n", Version)
+			fmt.Printf("from: %s\n", exePath())
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "sshd: unknown option %s\n", a)

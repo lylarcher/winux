@@ -35,6 +35,7 @@ func init() {
 //     forward or back slashes), validates that it exists and is a directory,
 //     prints the absolute path with back slashes and exits 0; otherwise it
 //     prints an error to stderr and exits 1.
+//
 // The shell layer (the PowerShell `cd` function in activate.ps1 and the cmd.exe
 // doskey macro in activate.cmd) then performs the actual location change, which
 // is the only way an external `cd` can work on Windows.
@@ -717,6 +718,13 @@ func elevateAndWait(label string, args []string, shell bool) int {
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", ps)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
+		// The elevated process itself failed (e.g. the command returned a
+		// non-zero exit code) — report that code, not a UAC problem.
+		if ee, ok := err.(*exec.ExitError); ok {
+			if code := ee.ExitCode(); code != 0 {
+				return code
+			}
+		}
 		warn(label, "elevation failed: %v (was the UAC prompt declined?)", err)
 		return 1
 	}

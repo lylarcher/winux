@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -88,6 +89,7 @@ func cmdWssh(args []string) int {
 			return 0
 		case a == "--version" || a == "-V":
 			fmt.Printf("winux wssh %s (pure-Go SSH client)\n", Version)
+			fmt.Printf("from: %s\n", exePath())
 			return 0
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			fmt.Fprintf(os.Stderr, "wssh: unknown option %s\n", a)
@@ -142,7 +144,7 @@ func cmdWssh(args []string) int {
 	if verbose {
 		fmt.Fprintf(os.Stderr, "wssh: connecting to %s as %s\n", addr, user)
 	}
-	conn, err := dialSSH(addr, user, password, timeout)
+	conn, err := dialSSH(addr, user, password, timeout, verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wssh: %v\n", err)
 		return 1
@@ -172,14 +174,66 @@ func netJoinHostPort(host string, port int) string {
 	return host + ":" + strconv.Itoa(port)
 }
 
-func dialSSH(addr, user, password string, timeout time.Duration) (*ssh.Client, error) {
+func dialSSH(addr, user, password string, timeout time.Duration, verbose bool) (*ssh.Client, error) {
 	conf := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		User: user,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+			ssh.KeyboardInteractive(sshKbdInteractive(password)),
+		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         timeout,
 	}
-	return ssh.Dial("tcp", addr, conf)
+	// Dial the TCP socket with the timeout, then keep that same deadline on the
+	// connection for the whole handshake (version exchange, algorithm
+	// negotiation AND authentication). x/crypto's ClientConfig.Timeout only
+	// covers the TCP dial, so without this a server that stalls mid-handshake
+	// (dropped packets, slow DNS/PAM) would hang wssh forever.
+	netConn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if timeout > 0 {
+		if err := netConn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			netConn.Close()
+			return nil, err
+		}
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "wssh: tcp connected to %s, starting ssh handshake (deadline %s)\n", addr, timeout)
+	}
+	c, chans, reqs, err := ssh.NewClientConn(netConn, addr, conf)
+	if err != nil {
+		netConn.Close()
+		return nil, err
+	}
+	if timeout > 0 {
+		netConn.SetDeadline(time.Time{}) // clear the handshake deadline
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "wssh: authenticated as %s\n", user)
+	}
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
+// sshKbdInteractive answers keyboard-interactive auth challenges (used by
+// OpenSSH servers that disable the plain "password" method, e.g.
+// KbdInteractiveAuthentication only). The first question is normally the
+// password we already collected; echo=true questions fall back to reading a
+// line from the console.
+func sshKbdInteractive(password string) ssh.KeyboardInteractiveChallenge {
+	return func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i := range questions {
+			if len(echos) > i && echos[i] {
+				fmt.Fprint(os.Stderr, questions[i]+": ")
+				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+				answers[i] = strings.TrimRight(line, "\r\n")
+			} else {
+				answers[i] = password
+			}
+		}
+		return answers, nil
+	}
 }
 
 func wsshRunCommand(session *ssh.Session, command string) int {

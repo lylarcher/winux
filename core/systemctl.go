@@ -765,6 +765,83 @@ func sysFindUnitFile(name string) string {
 	return ""
 }
 
+// sysCanonicalName maps user-facing unit aliases to the real unit name. The
+// winux sshd server is managed under the service name "winux-sshd" (the name
+// `sshd --install` registers); `systemctl status sshd` / `start sshd` are
+// convenient aliases for it, matching the well-known sshd.service name.
+func sysCanonicalName(name string) string {
+	switch name {
+	case "sshd":
+		return "winux-sshd"
+	}
+	return name
+}
+
+// sysBuiltinUnit returns the in-memory definition of a built-in unit that
+// needs no user-written .service file. The unit file is materialized on
+// demand (see sysMaterializeBuiltin) so wrapped svchost units get a real
+// path and `cat` shows the definition.
+func sysBuiltinUnit(name string) *sysUnit {
+	switch name {
+	case "winux-sshd":
+		return &sysUnit{
+			Name:        "winux-sshd",
+			Description: "winux SSH server (sshd)",
+			SvcType:     "wrapped",
+			Trigger:     "on-boot",
+			ExecStart:   fmt.Sprintf(`"%s" sshd`, sysGetWrapperPath()),
+			Restart:     "on-failure",
+		}
+	}
+	return nil
+}
+
+func sysBuiltinUnitText(u *sysUnit) string {
+	var b strings.Builder
+	b.WriteString("[Unit]\n")
+	b.WriteString("Description=" + u.Description + "\n")
+	b.WriteString("\n[Service]\n")
+	// "wrapped" is an internal backend name; the on-disk Type is the
+	// systemd-style "simple" (svchost wraps ExecStart either way).
+	t := u.SvcType
+	if t == "wrapped" {
+		t = "simple"
+	}
+	b.WriteString("Type=" + t + "\n")
+	b.WriteString("ExecStart=" + u.ExecStart + "\n")
+	if u.Restart != "" {
+		b.WriteString("Restart=" + u.Restart + "\n")
+	}
+	b.WriteString("\n[Install]\nWantedBy=multi-user.target\n")
+	return b.String()
+}
+
+// sysMaterializeBuiltin writes the built-in unit definition to the default
+// unit directory (needs admin; the caller falls back to the in-memory unit
+// when the write fails). Returns the unit file path, or "".
+func sysMaterializeBuiltin(name string) string {
+	u := sysBuiltinUnit(name)
+	if u == nil {
+		return ""
+	}
+	dir := sysDefaultUnitDir()
+	if dir == "" {
+		return ""
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return ""
+	}
+	text := sysBuiltinUnitText(u)
+	p := filepath.Join(dir, name+".service")
+	if err := os.WriteFile(p, []byte(text), 0644); err != nil {
+		return ""
+	}
+	return p
+}
+
+// ---------------------------------------------------------------------------
+// Unit resolution
+
 func sysResolveTarget(name string) (unit *sysUnit, rt *sysRuntime, st *sysUnitState, err error) {
 	if !sysValidUnitName(name) {
 		return nil, nil, nil, fmt.Errorf("illegal unit name %q", name)
@@ -772,8 +849,32 @@ func sysResolveTarget(name string) (unit *sysUnit, rt *sysRuntime, st *sysUnitSt
 	if p := sysFindUnitFile(name); p != "" {
 		if u, e := sysLoadUnit(p); e == nil {
 			unit = u
+		} else if sysBuiltinUnit(name) != nil {
+			// a stale materialized built-in file (older format): rewrite it
+			// and fall back to the in-memory definition if we cannot write.
+			if mp := sysMaterializeBuiltin(name); mp != "" {
+				if u2, e2 := sysLoadUnit(mp); e2 == nil {
+					unit = u2
+				} else {
+					return nil, nil, nil, e2
+				}
+			} else {
+				unit = sysBuiltinUnit(name)
+			}
 		} else {
 			return nil, nil, nil, e
+		}
+	}
+	if unit == nil {
+		// built-in units (e.g. winux-sshd) get materialized as real unit
+		// files when writable; otherwise the in-memory definition still works
+		// for read-only commands like status.
+		if u := sysBuiltinUnit(name); u != nil {
+			unit = u
+			if p := sysMaterializeBuiltin(name); p != "" {
+				unit.Path = p
+				unit.Hash = sha256Hex([]byte(sysBuiltinUnitText(u)))
+			}
 		}
 	}
 	rt = sysGetRuntime(name)
@@ -795,6 +896,7 @@ func cmdSystemctl(args []string) int {
 	cmd := strings.ToLower(args[0])
 	if cmd == "--version" || cmd == "-v" || cmd == "version" {
 		fmt.Printf("winux systemctl %s (systemd-style service manager on Windows)\n", Version)
+		fmt.Printf("from: %s\n", exePath())
 		return 0
 	}
 	if cmd == "--help" || cmd == "-h" || cmd == "help" {
@@ -806,6 +908,9 @@ func cmdSystemctl(args []string) int {
 	dryRun := sysHasFlag(rest, "--dry-run")
 	adopt := sysHasFlag(rest, "--adopt")
 	names := sysFilterNames(rest)
+	for i := range names {
+		names[i] = sysCanonicalName(names[i])
+	}
 
 	needAdmin := map[string]bool{
 		"daemon-reload": true, "daemon-reexec": true, "start": true, "stop": true,
@@ -996,6 +1101,14 @@ func cmdSystemctl(args []string) int {
 		for _, n := range names {
 			p := sysFindUnitFile(n)
 			if p == "" {
+				p = sysMaterializeBuiltin(n)
+			}
+			if p == "" {
+				if u := sysBuiltinUnit(n); u != nil {
+					fmt.Printf("# %s (built-in unit)\n", n+".service")
+					fmt.Print(sysBuiltinUnitText(u))
+					continue
+				}
 				fmt.Fprintf(os.Stderr, "systemctl: no files found for %s.service\n", n)
 				code = 4
 				continue
@@ -1263,7 +1376,11 @@ func sysCmdStatus(name string, full bool, code *int) {
 	}
 	fmt.Printf("● %s\n", title)
 	if rt == nil {
-		fmt.Printf("   Loaded: loaded (%s; not installed)\n", u.Path)
+		loaded := u.Path
+		if loaded == "" && sysBuiltinUnit(name) != nil {
+			loaded = "(built-in unit)"
+		}
+		fmt.Printf("   Loaded: loaded (%s; not installed)\n", loaded)
 		fmt.Printf("   Active: inactive (not installed — run 'systemctl daemon-reload' or 'systemctl start %s')\n", name)
 		*code = 3
 		return
@@ -1273,7 +1390,11 @@ func sysCmdStatus(name string, full bool, code *int) {
 		enabledStr = "enabled"
 	}
 	if u != nil {
-		fmt.Printf("   Loaded: loaded (%s; %s; backend: %s; trigger: %s)\n", u.Path, enabledStr, backendName(name), rt.Trigger)
+		loaded := u.Path
+		if loaded == "" && sysBuiltinUnit(name) != nil {
+			loaded = "(built-in unit)"
+		}
+		fmt.Printf("   Loaded: loaded (%s; %s; backend: %s; trigger: %s)\n", loaded, enabledStr, backendName(name), rt.Trigger)
 	} else {
 		fmt.Printf("   Loaded: loaded (Windows service, no unit file; %s)\n", enabledStr)
 	}

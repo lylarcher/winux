@@ -236,6 +236,7 @@ func cmdSvchost(args []string) int {
 			return 0
 		case "-v", "--version", "version":
 			fmt.Printf("winux svchost %s\n", Version)
+			fmt.Printf("from: %s\n", exePath())
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "svchost: unknown option %s\n", args[i])

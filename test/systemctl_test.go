@@ -131,3 +131,30 @@ func TestSystemctlIsActiveUnknown(t *testing.T) {
 		t.Fatalf("code=%d want 4 out=%q stderr=%q", code, out, errOut)
 	}
 }
+
+// The built-in winux sshd unit: `systemctl status sshd` aliases to the
+// winux-sshd service and resolves even without a unit file on disk
+// (read-only commands must work from a non-admin shell).
+func TestSystemctlSshdBuiltinAlias(t *testing.T) {
+	withUnitDir(t)
+	code, out, errOut := core.Execute("systemctl", []string{"status", "sshd"}, strings.NewReader(""))
+	if code != 3 { // resolved but not installed -> inactive
+		t.Fatalf("status code=%d want 3 out=%q stderr=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, "winux-sshd.service") || !strings.Contains(out, "winux SSH server") {
+		t.Fatalf("status out=%q (want the winux-sshd built-in unit)", out)
+	}
+
+	code, out, errOut = core.Execute("systemctl", []string{"cat", "sshd"}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("cat code=%d stderr=%q", code, errOut)
+	}
+	if !strings.Contains(out, "ExecStart=") || !strings.Contains(out, "sshd") {
+		t.Fatalf("cat out=%q (want the built-in ExecStart)", out)
+	}
+
+	code, out, _ = core.Execute("systemctl", []string{"is-active", "sshd"}, strings.NewReader(""))
+	if code != 3 || !strings.Contains(out, "inactive") {
+		t.Fatalf("is-active code=%d out=%q (want 3/inactive)", code, out)
+	}
+}

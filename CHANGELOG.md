@@ -3,6 +3,30 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 修复 wssh 连接 Linux OpenSSH 卡住；systemctl 内置 sshd 单元；`--version` 显示 exe 路径**：
+  - **wssh 握手超时**：`ClientConfig.Timeout` 只覆盖 TCP dial，握手/认证阶段
+    无超时——服务器握手不响应（丢包、慢 DNS/PAM）会无限挂起。改为手动
+    `net.DialTimeout` + `SetDeadline` 覆盖**整个连接+握手+认证**，
+    `--timeout`（默认 15s）对全程生效；握手结束后清除 deadline。
+  - **wssh keyboard-interactive**：`Auth` 增加 `KeyboardInteractive` 回调
+    （首个问题即已收集的密码），可连只开键盘交互认证（关 password 方法）
+    的 Linux OpenSSH 服务器。
+  - **wssh -v**：打印 TCP 连接、握手 deadline、认证完成各阶段日志，便于
+    定位连接/认证问题。
+  - **systemctl 内置 sshd 单元**：`systemctl status/start/stop/restart/
+    enable/disable/cat/is-active sshd` 直接可用——`sshd` 别名映射到内置
+    **winux-sshd** 单元（wrapped，svchost 托管 `winux.exe sshd`），首次
+    使用自动物化单元文件到 `%ProgramData%\systemctl\units\
+    winux-sshd.service`，与 `sshd --install` 管理同一个服务；非管理员下
+    只读命令仍能解析（回退内存定义），`cat` 打印内置内容。
+  - **sudo 报错修正**：提权后内部命令失败时直接透传其退出码，不再误报
+    "elevation failed (was the UAC prompt declined?)"。
+  - **`--version` 显示路径**：`winux --version` 与各命令（wssh/sshd/
+    systemctl/svchost）的 `--version`/`-v` 输出后新增 `from: <exe 路径>`
+    一行（经 `printVersion` 的 flag 框架命令同步生效）。
+  - 测试：新增 TestSystemctlSshdBuiltinAlias（status/cat/is-active 别名）、
+    TestWsshHandshakeTimeout（静默服务器在 --timeout 内失败）；README
+    同步；smoke 版本断言适配 from 行。
 - **2026-09-14 · 新增 `systemctl`/`svchost`/`sshd`/`wssh`，`build.ps1` 默认 dev**：
   - **`systemctl`**：systemd 风格服务管理器（纯 Go，参考 systemctl-win 工程
     的语义）：单元解析（INI + 引号感知 ExecStart）、四类后端——内置
