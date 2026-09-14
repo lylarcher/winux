@@ -203,7 +203,7 @@ try {
     Check 'hostname prints something' ((Text (hostname)).Length -gt 0)
 
     $upOut = Text (& $winux uptime)
-    Check 'uptime prints a GNU-style "up ..." line' ($upOut -match 'up \d+ (min|minutes|hours?|days?)') $upOut
+    Check 'uptime prints a GNU-style "up ..." line' ($upOut -match 'up \d+ (min|minutes|hours?|days?)|up\s+\d+:\d{2}') $upOut
     $upSince = Text (& $winux uptime -s)
     Check 'uptime -s prints the boot time' ($upSince -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$') $upSince
     $upPretty = Text (& $winux uptime -p)
@@ -224,7 +224,7 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)$') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime')) {
+            'netstat', 'ss', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -245,6 +245,15 @@ try {
 
     $code = Invoke-CmdLine "`"${winux}`" clickhouse -h 127.0.0.1 --port 1 --timeout 2 -q 'SELECT 1' >nul 2>&1"
     Check 'clickhouse reports a connection failure without a server' ($code -eq 1) "exit=$code"
+
+    $code = Invoke-CmdLine "`"${winux}`" mongodb -h 127.0.0.1 --port 1 --timeout 2 -q >nul 2>&1"
+    Check 'mongodb reports a connection failure without a server' ($code -eq 1) "exit=$code"
+
+    $code = Invoke-CmdLine "`"${winux}`" psql -h 127.0.0.1 --port 1 --timeout 2 -q >nul 2>&1"
+    Check 'psql reports a connection failure without a server' ($code -eq 1) "exit=$code"
+
+    $sqOut = Text (& $winux sqlite :memory: "CREATE TABLE t(a); INSERT INTO t VALUES (9); SELECT a FROM t;")
+    Check 'sqlite creates, inserts and selects in-memory' ($sqOut -match '9') $sqOut
 
     # ------------------------------------------------------- nc / netcat ----
     $code = Invoke-CmdLine "`"${winux}`" nc >nul 2>&1"

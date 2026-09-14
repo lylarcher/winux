@@ -3,6 +3,39 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 新增 `mongodb`/`psql`/`sqlite` 客户端与 `build.ps1 -Version`**：
+  - **`mongodb`**：纯 Go 客户端（**无需 mongosh/mongo**），直接 wire
+    协议——手写 BSON 编解码、OP_MSG、SCRAM-SHA-256（含服务端签名校验）。
+    选项 `-h --port -u --password --authenticationDatabase -d --eval
+    --tls/--tlsInsecure --timeout`；REPL 支持 `use/show dbs/show
+    collections`、`db.<col>.<method>({...})` 简式（CRUD/aggregate/
+    countDocuments/distinct/…，支持 `ObjectId()` 与无引号键）与原样 JSON
+    命令文档。单测用假 wire 服务器完整验证 SCRAM 双向握手（正确密码
+    通过、错误 proof 拒绝）与 find/error/连接失败路径，全绿。
+  - **`psql`**：纯 Go PostgreSQL 客户端（**无需 psql/PostgreSQL**），v3
+    wire 协议：启动握手、明文/MD5/SCRAM-SHA-256 认证（复用 mongodb 的
+    SCRAM 实现，MD5 用标准库）、简单查询协议多结果集。选项
+    `-h --port -U -d -W -w -c -f -t -A -q --ssl --timeout`，密码取
+    PGPASSWORD 或 `-W` 隐藏输入；psql 风格对齐表格；REPL 支持
+    `\q \l \dt \d NAME \c DB \?`。单测假 wire 服务器覆盖三种认证、多
+    结果集、错误路径，全绿。
+  - **`sqlite`**：客户端内嵌**纯 Go 驱动 modernc.org/sqlite**（无 CGO），
+    因此**无需安装 sqlite3 CLI**——这是 winux 首个（也是唯一）第三方 Go
+    模块，`go.mod` 的 go 指令随驱动要求升到 1.25（构建机需 Go 1.25+，
+    本地 1.25.5 已验证；二进制约 8.1MB → 17.8MB）。用法
+    `sqlite [OPTIONS] [DBFILE] [SQL]`（缺省 `:memory:`），选项
+    `-r/--readonly --json --line --list --separator --nullvalue --cmd -v`，
+    REPL 点命令 `.tables/.schema/.databases/.indexes/.dump/.mode/
+    .headers/.read`。单测用真实引擎覆盖建表/插入/查询、各输出模式、
+    只读写失败、NULL 渲染、错误路径，全绿。
+  - **`build.ps1 -Version`**：`-Version x.y.z` 注入正式发布版本，
+    `-Version dev` 注入 git commit id（开发/测试版，无仓库回退 1.0.0），
+    缺省为稳定 `1.0.0`——commit id 只作为开发版本号，不再默认嵌入。
+    构建完成行显示 `version <ver> [release|dev (git commit)]`。
+  - 命令表 60→63；smoke 新增 6 项（help 循环 +3、sqlite 真实执行、
+    mongodb/psql 连接失败）；README 命令表/三个说明节/依赖说明/目录结构
+    同步更新。
+
 - **2026-09-14 · 构建注入 git commit id 与构建时间**：`Version` 由常量改为
   包变量，新增 `BuildTime`；`build.ps1` 构建时经
   `-ldflags "-X winux/core.Version=… -X winux/core.BuildTime=…"` 注入

@@ -18,6 +18,11 @@
 #>
 [CmdletBinding()]
 param(
+    # Version to stamp into core.Version. Default (omitted) = 1.0.0.
+    #   -Version 2.1.0   a formal release version (x.y.z)
+    #   -Version dev     development/test build: the 8-char git commit id
+    #                    (falls back to 1.0.0 without a local git repository)
+    [string]$Version,
     # Create real cp.exe/rm.exe/... copies (or hard links) instead of .cmd shims.
     [switch]$RealExes,
     [switch]$CopyInsteadOfHardLinks,
@@ -37,7 +42,8 @@ $commands = @(
     'ls', 'mkdir', 'more', 'mv', 'netstat', 'nmcli', 'nmtui', 'ps', 'pwd', 'rm', 'sh', 'sort', 'ss',
     'su', 'sudo', 'tail', 'touch', 'tr', 'uname', 'uniq', 'uptime', 'useradd', 'userdel', 'usermod',
     'passwd', 'vi', 'vim', 'wc', 'which', 'whoami',
-    'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse'
+    'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse',
+    'mongodb', 'psql', 'sqlite'
 )
 
 $env:GOTELEMETRY = 'off'
@@ -55,15 +61,29 @@ Write-Host 'Building bin\winux.exe ...' -ForegroundColor Cyan
 
 # Stamp the version with the 8-char git commit id (fallback 1.0.0 when there is
 # no local git repository) and the build timestamp into core.Version/BuildTime.
-$commit = '1.0.0'
+# Resolve the version to stamp: a formal release version when -Version is
+# given (x.y.z), 'dev' stamps the 8-char git commit id, and the default
+# (no -Version) is the stable 1.0.0. The commit id is only ever a development
+# build marker.
+$commit = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
     $rev = & git rev-parse --short=8 HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $rev) { $commit = $rev.Trim() }
 }
+$stampVersion = '1.0.0'
+if ($Version) {
+    if ($Version -ieq 'dev' -or $Version -ieq 'development') {
+        $stampVersion = if ($commit) { $commit } else { '1.0.0' }
+    } elseif ($Version -match '^\d+\.\d+(\.\d+)*$') {
+        $stampVersion = $Version
+    } else {
+        throw "invalid -Version '$Version' (use a version like 1.0.0, or 'dev' for a git-commit build)"
+    }
+}
 # ISO timestamp with a 'T' separator: no spaces, so the linker's -X value
 # needs no quoting (PowerShell 5.1 mangles quoted -ldflags arguments).
 $buildTime = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
-$ldflags = "-s -w -X winux/core.Version=$commit -X winux/core.BuildTime=$buildTime"
+$ldflags = "-s -w -X winux/core.Version=$stampVersion -X winux/core.BuildTime=$buildTime"
 
 Push-Location $root
 try {
@@ -107,8 +127,9 @@ if ($RealExes) {
 
 
 $exeSize = (Get-Item (Join-Path $bin 'winux.exe')).Length
+$mode = if ($Version -and $Version -ne $stampVersion) { 'dev (git commit)' } else { 'release' }
 Write-Host ''
-Write-Host ("Build complete: {0} commands, winux.exe {1:N0} bytes (version {2}, built {3})" -f $commands.Count, $exeSize, $commit, $buildTime) -ForegroundColor Green
+Write-Host ("Build complete: {0} commands, winux.exe {1:N0} bytes (version {2} [{3}], built {4})" -f $commands.Count, $exeSize, $stampVersion, $mode, $buildTime) -ForegroundColor Green
 Write-Host ''
 Write-Host 'Enable the commands in a shell (winux.exe on PATH):' -ForegroundColor Yellow
 Write-Host ("  cmd.exe     :  for /f `"delims=`" %l in ('winux activate') do @%l   (exit: ... 'winux deactivate' ...)" )

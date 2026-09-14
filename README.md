@@ -221,6 +221,9 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `nc`/`netcat` | 纯 Go TCP/UDP 客户端与监听器：`-l -u -p -s -w -q -n -v -z -k -4 -6 -i`；stdin↔socket 双向转发、`-z` 端口扫描、`-k` 持续监听；`-e/-c`（连上后执行命令）因安全原因在 Windows 上拒绝（见「nc 说明」） |
 | `clickhouse` | 纯 Go ClickHouse 客户端（**无需安装 clickhouse-cli**，走 HTTP 接口）：`-h --port -u --password -d -q/-e -f -m --secure --timeout`；`clickhouse client` 风格、`-q`/stdin 批量、交互 REPL（见「clickhouse 说明」） |
 | `uptime` | 系统运行时长（`GetTickCount64` + 终端服务会话数）：默认 GNU 格式 `up 3 days, 4:05, 1 user, load average: N/A`；`-s` 启动时间、`-p` 友好格式；load average 为 Windows 无此概念，诚实显示 N/A |
+| `mongodb` | 纯 Go MongoDB 客户端（**无需安装 mongosh/mongo**，直接 wire 协议）：`-h --port -u --password --authenticationDatabase -d --eval --tls --timeout`；手写 BSON + OP_MSG + SCRAM-SHA-256；`use/show dbs/show collections` 与 `db.<col>.<method>({...})` 简式（find/findOne/insertOne/insertMany/updateOne/updateMany/deleteOne/deleteMany/aggregate/countDocuments/distinct/…，支持 `ObjectId()`、无引号键），也接受原样 JSON 命令（见「mongodb 说明」） |
+| `psql` | 纯 Go PostgreSQL 客户端（**无需安装 psql/PostgreSQL**，wire v3 协议）：`-h --port -U -d -W -w -c -f -t -A -q --ssl --timeout`；认证支持明文/MD5/SCRAM-SHA-256（PGPASSWORD 或 `-W` 隐藏输入）；psql 风格对齐表格，`-t` 只元组、`-A` 无对齐；REPL 支持 `\q \l \dt \d NAME \c DB \?`（见「psql 说明」） |
+| `sqlite` | SQLite 客户端（**无需安装 sqlite3 CLI**，内嵌纯 Go 驱动 modernc.org/sqlite）：`sqlite [OPTIONS] [DBFILE] [SQL]`，缺省 DBFILE 用 `:memory:`；`-r/--readonly`、`-json/-line/-list/--column` 输出、`--separator --nullvalue --cmd -v`；REPL 点命令 `.tables .schema .databases .indexes .dump .mode .headers .read`（见「sqlite 说明」） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -570,19 +573,82 @@ clickhouse-cli**），走 **HTTP 接口**（默认 `localhost:8123`），SQL 以
   终端用 `PrettyCompact`、管道/重定向用 `TabSeparated`；SQL 里自带
   `FORMAT X` 时以 SQL 为准（服务端行为）。
 
+## mongodb 说明
+
+`mongodb` 是 winux 内置的纯 Go MongoDB 客户端（**无需安装
+mongosh/mongo**），直接讲 wire 协议：手写 BSON 编解码、OP_MSG 消息、
+SCRAM-SHA-256 认证（含服务端签名校验），全部标准库。
+
+- **连接选项**：`-h/--host`（默认 localhost）、`--port`（默认 27017）、
+  `-u/--username`（给定时触发 SCRAM-SHA-256 认证）、`--password`
+  （`=SECRET`/` SECRET`/裸写交互隐藏输入）、`--authenticationDatabase`
+  （默认 admin）、`-d/--database`（默认 test）、`--tls`/`--tlsInsecure`、
+  `--timeout SECS`。
+- **执行方式**：`--eval '<命令>'` 一次执行；或 stdin 管道逐行；或进入
+  **交互 REPL**（`dbname>` 提示，`use <db>`、`show dbs`、
+  `show collections`、`\q`/`exit` 退出）。
+- **简式语法** `db.<集合>.<方法>(<json>)`：find/findOne/insertOne/
+  insertMany/updateOne/updateMany/replaceOne/deleteOne/deleteMany/
+  aggregate/countDocuments/distinct/drop/create/createIndexes；支持
+  `ObjectId("hex")` 与无引号键（mongosh 习惯），如
+  `db.users.findOne({_id: ObjectId("507f1f77bcf86cd799439011")})`。
+  也接受**原样 JSON 命令文档**（`{"ping":1}`、`{"find":"users","filter":…}`）
+  ——不做 JavaScript 解释，因此没有 mongosh 的 JS 语法。
+- **输出**：回复文档逐行 JSON（`-json` 是默认格式，`--format pretty`
+  缩进）；find/aggregate 自动只输出 `cursor.firstBatch`。
+
+## psql 说明
+
+`psql` 是 winux 内置的纯 Go PostgreSQL 客户端（**无需安装 psql**），走
+v3 wire 协议：启动握手、认证（明文 / MD5 / SCRAM-SHA-256）、简单查询协议
+（Q → RowDescription/DataRow/CommandComplete），全部标准库。
+
+- **连接选项**：`-h/--host`（默认 localhost）、`--port`（默认 5432）、
+  `-U/--username`（默认 postgres）、`-d/--dbname`（默认同用户名；也接受
+  位置参数 `psql mydb`）、`-W/--password`（交互隐藏输入）、`-w/--no-password`、
+  `--ssl`（TLS，不校验服务器证书）、`--timeout SECS`。密码来源：
+  `PGPASSWORD` 环境变量 > `-W` 提示 > 非交互时明确报错。
+- **执行方式**：`-c/--command "SQL"`（可重复）、`-f/--file`、stdin 管道
+  批量、或 `psql -U postgres mydb` 进入**交互 REPL**（`db=> ` 提示，
+  `\q` 退出、`\l` 数据库列表、`\dt` 表列表、`\d NAME` 表列、
+  `\c DB` 切换连接、`\?` 帮助）。
+- **输出**：psql 风格对齐表格；`-t/--tuples-only` 只输出数据行、
+  `-A/--no-align` 制表符分隔；一条 SQL 的多个结果集依次输出。
+
+## sqlite 说明
+
+`sqlite` 是 winux 内置的 SQLite 客户端，驱动为**纯 Go 移植
+modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CLI。
+
+- **用法**：`sqlite [OPTIONS] [DBFILE] [SQL]`。缺省 DBFILE 用
+  `:memory:`；给 SQL 则执行后退出（可多条，`;` 分隔），否则进入
+  **交互 REPL**（`sqlite> ` 提示，SQL 以 `;` 结束，多行累积）。
+- **选项**：`-r/--readonly`（只读打开）、`--json`（结果数组 JSON）、
+  `--line`（`字段 = 值`）、`--list` + `--separator SEP`（默认 `|`）、
+  `--column`（默认对齐表）、`--nullvalue VALUE`、`-H/--header` 与
+  `-N/--noheader`、`--cmd SQL`（进入 REPL 前先执行，可重复）、
+  `-v/--verbose`（stderr 回显每条 SQL）。
+- **REPL 点命令**：`.tables [模式]`、`.schema [表]`、`.databases`、
+  `.indexes [表]`、`.dump [表]`、`.mode column|list|json|line`、
+  `.headers on|off`、`.separator`、`.nullvalue`、`.read FILE`、`.quit`。
+- **注意**：这是 winux 唯一的第三方 Go 模块（见「构建与测试」的依赖
+  说明）；INSERT/UPDATE/DELETE/REPLACE 显示
+  `Query OK, N rows affected`，DDL 静默执行。
+
 ## 构建与测试
 
 ```powershell
 # 单元测试（flags、glob/tilde 展开、cp/rm/mv/mkdir/touch/ls、grep 上下文、
 #            head/tail/wc/sort/uniq/cut/tr、pager/vi 内部逻辑、date 解析、
-#            chmod/cal、ps、nc 回环、clickhouse 假 HTTP 端；netstat/ss、
-#            ip/nmcli/ifconfig 等网络用例默认跳过，见「网络命令（只读策略）」）
+#            chmod/cal、ps、nc 回环、clickhouse 假 HTTP 端、mongodb/psql
+#            假 wire 端、真 sqlite 内存/临时库；netstat/ss、ip/nmcli/ifconfig
+#            等网络用例默认跳过，见「网络命令（只读策略）」）
 go test ./...
 
-# 一键构建 + 垫片 + 激活脚本
+# 一键构建 + 垫片 + 激活脚本（-Version x.y.z 正式版 / -Version dev 用 git commit id）
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，211 项断言）
+# 端到端冒烟测试（PowerShell 与 cmd.exe 各一节，218 项断言）
 powershell -ExecutionPolicy Bypass -File .\smoke.ps1
 
 # 冒烟测试另跑只读网络段落（netstat/ss/ip/nmcli/ifconfig，在常规项之上增加）
@@ -592,6 +658,11 @@ powershell -ExecutionPolicy Bypass -File .\smoke.ps1 -Network
 
 也可以 `go build -o bin\winux.exe .` 手动构建。`build.ps1 -RealExes` 可改为生成
 每个命令的真实 exe（硬链接，省空间），`-CopyInsteadOfHardLinks` 用复制。
+
+**依赖说明**：winux 的唯一第三方 Go 模块是 `modernc.org/sqlite`（`sqlite`
+命令用，纯 Go 无 CGO）；它要求 `go 1.25` 以上，因此 `go.mod` 的 `go`
+指令已从 1.21 升到 1.25。其余全部命令（含 mongodb/psql/clickhouse/mysql/
+redis-cli/nc/tcpdump 等协议客户端）都只依赖 Go 标准库。
 
 **版本号**由 `build.ps1` 构建时经 `-ldflags -X` 注入：取本地 git 仓库
 `HEAD` 的**后 8 位 commit id**（`git rev-parse --short=8 HEAD`），同时注入
@@ -640,6 +711,9 @@ winux/
 │  ├─ redis.go         redis-cli 纯 Go 客户端（RESP2/交互 REPL）
 │  ├─ nc.go            nc / netcat（TCP/UDP 连接与监听，stdin 双向转发）
 │  ├─ clickhouse.go    clickhouse 纯 Go 客户端（HTTP 接口/交互 REPL）
+│  ├─ mongo.go         mongodb 纯 Go 客户端（BSON/OP_MSG/SCRAM/交互 REPL）
+│  ├─ psql.go          psql 纯 Go 客户端（wire v3/MD5·SCRAM/交互 REPL）
+│  ├─ sqlite.go        sqlite 客户端（内嵌 modernc.org/sqlite，交互 REPL）
 │  ├─ uptime.go        uptime（+ uptime_windows.go：GetTickCount64/WTS 会话数）
 │  └─ *_other.go    非 Windows 空实现（便于交叉编译/CI）
 ├─ test/             package core_test 的单元测试（harness + 各命令）

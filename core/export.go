@@ -131,3 +131,12 @@ func SearchFrom(lines []string, re *regexp.Regexp, from int, backwards bool) (in
 
 // DecodeCSI classifies a terminal escape/control sequence.
 func DecodeCSI(seq string) KeyKind { return decodeCSI(seq).kind }
+
+// MongoBinary mirrors the BSON binary value used in MongoDB wire messages.
+type MongoBinary = mongoBinary
+
+// BsonEncode encodes v as a BSON document (used by tests to build replies).
+func BsonEncode(v any) []byte { return bsonEncode(v) }
+
+// BsonDecodeDoc decodes a BSON document at the start of p.
+func BsonDecodeDoc(p []byte) (map[string]any, int) { return bsonDecodeDoc(p, 0) }
