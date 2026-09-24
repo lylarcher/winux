@@ -229,6 +229,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `svchost` | 内置 Windows 服务宿主（替代外部 wrapper）：`svchost -unit <unit.service> [-debug]`；由 systemctl 的 wrapped 后端自动调用，托管 ExecStart 子进程并转发输出到 `<unit>.wrapper.log` |
 | `sshd` | 纯 Go SSH 服务端（**无需安装 Windows OpenSSH**）：默认监听 **1022** 端口；`--auth local` 用本地 Windows 账号密码校验（LogonUserW），`--auth any` 仅测试用；连入后是 winux sh 环境（exec 请求跑 `winux sh -c`、shell 请求挂 ConPTY 伪控制台）；`sshd --install` 注册并启动 **winux-sshd** 服务（systemctl 可管理），host key 自动生成于 `%ProgramData%\winux\sshd_host_ed25519`（见「sshd / wssh 说明」） |
 | `wssh` | 纯 Go SSH 客户端（**无需安装 OpenSSH**）：`wssh [user@]host[:port] [command]`，默认端口 **1022**；密码认证（`-p` 或交互提示），可连 winux sshd 或任意 OpenSSH 服务器；交互模式请求远端 pty（ConPTY）并转发本机终端（见「sshd / wssh 说明」） |
+| `open` | **自定义命令**（非 Linux 命令）：把路径交给 Windows 资源管理器/默认应用打开——目录用资源管理器打开，文件用默认程序打开；`open .` 当前目录、`open ..`/`open ../` 父目录、`open ~` 用户目录；支持一次给多个路径（见「open 说明」） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -755,6 +756,21 @@ Windows 上**不需要安装 OpenSSH 组件**。
   `winux sshd`（或装成服务），另一台 `winux wssh 对方IP`（激活环境后直接
   `wssh`）。交互会话里 Ctrl+C 会**转发给远端**（和 Linux 的 ssh 一样，用来
   打断远端命令），要退出远端 shell 就输入 `exit`（或让远端 shell 结束）。
+
+## open 说明（自定义命令）
+
+`open` 是 winux 的自定义命令（Linux 没有同名语义）：它**不自己打开目录**，
+而是把解析好的路径交给 Windows——目录在**资源管理器**（explorer.exe）中
+打开，文件用其**默认关联程序**打开（`launchDetached` 启动后即返回，不阻塞
+终端）。路径解析规则与 `cd` 一致：
+
+- `open .` —— 当前目录；`open ..`、`open ../` —— 父目录；
+- `open ~` —— 用户目录；`open C:\work` —— 绝对路径；
+- `open C:` —— 该盘根目录；`open /` —— 当前盘根；
+- 无参数等价于 `open .`；一次可给多个路径，逐个打开，任一失败退出码为 1；
+- 不存在的路径报 `open: <path>: No such file or directory` 且退出 1（不弹窗）。
+
+激活环境后可直接 `open .`；`winux open .` 或 `open.cmd .` 亦可。
 
 ## 构建与测试
 

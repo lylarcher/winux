@@ -3,6 +3,24 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 新增自定义命令 `open`（交给 Windows 资源管理器/默认应用打开路径）**：
+  - **语义**（非 Linux 命令）：winux **不自己打开目录**，而是把解析好的路径
+    交给 Windows——目录用**资源管理器**（explorer.exe）打开，文件用默认关联
+    程序打开。复用 `nmtui` 打开 ncpa.cpl 的 `launchDetached` 机制（启动
+    explorer 后即返回，不阻塞终端），并把 `launchDetached` 从 ip.go 移到
+    util.go 作为通用助手。
+  - **路径解析**与 `cd` 一致（`ResolveCdTarget`）：`open .` 当前目录、
+    `open ..`/`open ../` 父目录、`open ~` 用户目录、`open C:\`/`open C:` 盘根、
+    `open /` 当前盘根；无参数等价 `open .`；一次可给多个路径逐个打开。
+  - **错误**：不存在的路径报 `open: <path>: No such file or directory` 退出 1
+    （不弹窗）；任一目标失败整体退出 1，其余目标照常打开。
+  - 平台层：`core/open_windows.go`（explorer.exe）/ `core/open_other.go`
+    （unsupportedError，保持 linux/darwin 交叉编译通过）。
+  - 测试：`core/open_test.go`（`.`, `..`, `../`, `~`, 缺失路径，纯解析不弹窗）、
+    `test/open_test.go`（缺失路径退出 1、坏选项退出 2、多缺失逐个报错）；
+    smoke 帮助循环加入 `open`，并新增「open 拒绝缺失路径（不弹窗）」断言；
+    build.ps1 `-RealExes` 列表加入 `open`；README 命令表 + 「open 说明」章节。
+
 - **2026-09-14 · 修复 wssh/ssh 登录后卡在 `sh>`（按键无效、无回显）**：
   - **根因在服务端 ConPTY 接线**：`CreatePseudoConsole` 的 `hInput`/`hOutput`
     被传成了**服务端自己用的那两头**（`inW`/`outR`），也就是官方文档与所有

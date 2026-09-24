@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +13,18 @@ import (
 )
 
 const maxLineSize = 16 * 1024 * 1024
+
+// launchDetached starts a GUI helper process without waiting for it, so the
+// caller returns while the window keeps running (used by nmtui for the
+// ncpa.cpl / ms-settings panels and by open for explorer.exe).
+func launchDetached(name, arg string) error {
+	cmd := exec.Command(name, arg)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	cmd.Process.Release()
+	return nil
+}
 
 // ANSI escape sequences: initConsole enables VT processing on the console.
 const (

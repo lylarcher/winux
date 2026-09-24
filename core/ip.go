@@ -10,7 +10,6 @@ package core
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -568,15 +567,4 @@ func cmdNmtui(args []string) int {
 		warn("nmtui", "unknown command '%s'; supported subcommands: edit, connect, hostname", sub)
 		return 1
 	}
-}
-
-// launchDetached starts a GUI helper process without waiting for it, so the
-// caller returns while the panel keeps running.
-func launchDetached(name, arg string) error {
-	cmd := exec.Command(name, arg)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	cmd.Process.Release()
-	return nil
 }

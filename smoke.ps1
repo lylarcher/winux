@@ -224,10 +224,14 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)' -and $ver -match 'from: ') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
+            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'open', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
+    $openErr = (& cmd /c "`"${winux}`" open Z:\winux-no-such-dir-xyz 2>&1" | Out-String)
+    $openCode = $LASTEXITCODE
+    Check 'open rejects a missing path (no window is popped)' `
+        (($openCode -eq 1) -and ($openErr -match 'No such file or directory')) (Text $openErr)
     Check 'sudo explains the Windows elevation model' ((Text (& $winux sudo --help)) -match 'UAC|administrator')
     Check 'su explains that Windows has no root account' ((Text (& $winux su --help)) -match 'USER|USER')
 
