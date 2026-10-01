@@ -726,21 +726,45 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
   讲服务协议（`StartServiceCtrlDispatcher` + 控制码处理），否则启动报
   **1053**——普通控制台程序不讲，所以 `wrapped`（`Type=simple`）必须由宿主
   承接。这个宿主**不放在 winux 安装目录**，而是每个单元在
-  `%ProgramData%\systemctl\hosts\<unit>.exe` 拥有自己的一份（优先**硬链接**
-  到 winux.exe，跨卷时退化为复制），SCM 注册指向它：
+  `%ProgramData%\systemctl\hosts\<unit>.exe` 拥有自己的一份，SCM 注册指向它：
   - winux 被移动/删除/替换（升级、卸载）后，已安装的服务**照旧能启动**，
     因为宿主文件自己拥有数据；`systemctl` 只用来管理，不是服务运行的前提。
   - 源 winux.exe 内容变化时（升级）宿主会在下次 `start`/`enable`/
-    `daemon-reload` 时按内容比对刷新；正在运行而文件被映射时跳过刷新并给出
-    提示，服务不受影响。
+    `daemon-reload` 时按内容比对（`SameFile → 大小 → SHA-256`）刷新。
   - `sshd --install` 也注册这份宿主副本（`sshd --service` 本身讲 SCM 协议，
     不需要包装进程），所以 sshd 服务同样不依赖 winux 安装目录。
   - 单元自己的 `ExecStart` 若写的就是 winux.exe（自定义单元），那它按定义仍
     依赖 winux——框架能保证的只是**宿主**这一层独立。
-  - **升级 winux 时**：服务在运行会占用安装目录的 winux.exe（映像是被映射
-    的），所以先 `winux sudo systemctl stop sshd`，再覆盖安装目录的
-    winux.exe，然后 `start`。硬链接下两者共享同一份数据，起来就是新二进制；
-    若是替换成新文件（`move /y`），`start` 时会按内容比对把宿主刷新成新版。
+  - **宿主落盘方式由 `SYSTEMCTL_HOST_MODE` 选择**（`link`|`copy`，默认
+    `link`；只在物化宿主时起作用，即 `start`/`enable`/`daemon-reload`/
+    `sshd --install`，服务运行时不需要该变量）：
+
+    | 模式 | 宿主与安装目录的关系 | 升级 winux（覆盖 `winux.exe`） | 代价 |
+    |---|---|---|---|
+    | `link`（默认） | **硬链接**（同卷；跨卷/不支持链接时自动退化为复制） | 服务运行时 `copy /y` 原地覆盖会被拒（共享冲突）；先 `stop` 或改用 `move /y` 替换。链接共享数据，服务下次起就是新二进制 | 每单元 ≈ 0 字节 |
+    | `copy` | 独立**副本**，彻底解耦 | 服务运行时也能直接 `copy /y`；各服务在下次 `start` 时才换新二进制 | 每单元一份二进制（stamp 版 ≈ 12.6 MiB） |
+
+    - 两种模式都满足「删/换/移 winux 安装目录后服务照旧能启动」。
+    - 切换模式立即生效：`link → copy` 会在下次物化时**打断已有硬链接**改成
+      真副本（否则仍共享数据）；`copy → link` 不必重写现有副本，等 winux
+      二进制内容变化（升级）刷新宿主时自然变回链接。
+    - 设 `link`/`copy` 以外的值会打印一条 `ignoring SYSTEMCTL_HOST_MODE=...`
+      并退回 `link`。
+  - **升级 winux 的两种做法**（当前注册指向宿主文件，见上表）：
+    ```bat
+    :: 一、先停服务再原地覆盖（最稳；copy 模式下不停也行）
+    winux sudo systemctl stop sshd
+    copy /y <新版>\winux.exe D:\my-tools\winux\winux.exe
+    winux shims
+    winux sudo systemctl start sshd
+
+    :: 二、不停服务，用替换而不是覆盖
+    move /y <新版>\winux.exe D:\my-tools\winux\winux.exe
+    winux sudo systemctl daemon-reload   :: 宿主重链到新二进制（旧进程不受影响）
+    winux sudo systemctl restart sshd    :: 让 sshd 真正跑新版本
+    ```
+    运行中删除/重建宿主文件是被允许的（映像是用 `FILE_SHARE_DELETE` 打开的，
+    旧进程继续用旧数据），只有**原地写入**同一份数据会被拒。
 - **示例**：把 winux sshd 装成开机自启服务
   `winux sudo systemctl enable sshd` + `start sshd`
   （或等价的 `winux sshd --install`，两者管理同一个 winux-sshd 服务）。

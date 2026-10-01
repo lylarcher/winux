@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // sysHostDir returns the directory holding the per-unit service hosts.
@@ -85,30 +86,72 @@ func sysMaterializeHostFrom(src, name string) (string, error) {
 		}
 		return "", fmt.Errorf("cannot create the service host %s: %v", dest, err)
 	}
-	if sysHostUpToDate(src, dest) {
+	mode := sysHostMode()
+	if sysHostUpToDate(src, dest, mode) {
 		return dest, nil
 	}
 	// refresh: drop the stale host first so Link/Copy always succeeds
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		if _, serr := os.Stat(dest); serr == nil {
-			// locked, almost certainly because the service is running and the
-			// image is mapped: keep the old host and let a later start refresh
+			// locked (another process holds it open without sharing delete):
+			// keep the old host and let a later start refresh it
 			warn("systemctl", "cannot refresh the service host %s: %v", dest, err)
 			return dest, nil
 		}
 		return "", err
 	}
-	if err := os.Link(src, dest); err != nil {
-		if cerr := copyFileContents(src, dest); cerr != nil {
-			return "", fmt.Errorf("cannot create the service host %s: %v", dest, cerr)
+	if mode == "link" {
+		if err := os.Link(src, dest); err == nil {
+			return dest, nil
 		}
+		// no hard links on this volume: fall through to a copy, which is the
+		// only remaining way to give the unit a self-contained host
+	}
+	if cerr := copyFileContents(src, dest); cerr != nil {
+		return "", fmt.Errorf("cannot create the service host %s: %v", dest, cerr)
 	}
 	return dest, nil
 }
 
-// sysHostUpToDate reports whether dest already serves as the host for src: the
-// very same file (hard link), or a copy with identical contents.
-func sysHostUpToDate(src, dest string) bool {
+// sysHostMode returns how a per-unit host is materialized:
+//
+//	link (default) - hard link to the winux binary when the volume allows it,
+//	                 otherwise a copy. Costs no extra disk space, but the host
+//	                 shares its data with the installation, so overwriting
+//	                 winux.exe in place (copy /y) is refused while a service
+//	                 runs from it — stop the service first, or replace the file
+//	                 (move /y).
+//	copy           - always a real copy. The host then owns its data outright:
+//	                 winux.exe can even be overwritten in place while services
+//	                 run, and each service picks the new binary up at its next
+//	                 start. Costs one full binary per unit (~13 MiB).
+//
+// SYSTEMCTL_HOST_MODE selects the mode (link|copy); an empty or unrecognized
+// value means "link". The mode only matters when a host is materialized, i.e.
+// at `systemctl start`/`enable`/`daemon-reload` or `sshd --install` — never at
+// service start-up, so the services themselves need no environment.
+func sysHostMode() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYSTEMCTL_HOST_MODE"))) {
+	case "copy", "clone":
+		return "copy"
+	case "", "link", "hardlink", "hard":
+		return "link"
+	default:
+		hostModeWarn.Do(func() {
+			warn("systemctl", "ignoring SYSTEMCTL_HOST_MODE=%q (use link or copy)",
+				os.Getenv("SYSTEMCTL_HOST_MODE"))
+		})
+		return "link"
+	}
+}
+
+// hostModeWarn keeps the "unrecognized mode" warning to one line per run.
+var hostModeWarn sync.Once
+
+// sysHostUpToDate reports whether dest already serves as the host for src in
+// the given mode: the very same file (hard link), or a copy with identical
+// contents.
+func sysHostUpToDate(src, dest, mode string) bool {
 	si, err := os.Stat(src)
 	if err != nil {
 		return false
@@ -118,7 +161,12 @@ func sysHostUpToDate(src, dest string) bool {
 		return false
 	}
 	if os.SameFile(si, di) {
-		return true
+		// a hard link is only right in link mode: copy mode must own its data,
+		// so an existing link is broken (re-copied) even when the contents
+		// match. The other direction needs no action — an existing copy is
+		// good enough for link mode and turns into a link at the next refresh
+		// (i.e. when the winux binary changes).
+		return mode != "copy"
 	}
 	if si.Size() != di.Size() {
 		return false

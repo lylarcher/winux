@@ -198,6 +198,114 @@ func TestSamePathComparison(t *testing.T) {
 	}
 }
 
+func TestHostModeSelection(t *testing.T) {
+	cases := []struct{ env, want string }{
+		{"", "link"},
+		{"link", "link"},
+		{"LINK", "link"},
+		{" link ", "link"},
+		{"copy", "copy"},
+		{"COPY", "copy"},
+		{"copy ", "copy"},
+		{"bogus", "link"}, // unrecognized: warn once, keep the default
+	}
+	for _, c := range cases {
+		t.Setenv("SYSTEMCTL_HOST_MODE", c.env)
+		if got := sysHostMode(); got != c.want {
+			t.Errorf("SYSTEMCTL_HOST_MODE=%q -> %q, want %q", c.env, got, c.want)
+		}
+	}
+}
+
+func TestMaterializeHostCopyModeDecouples(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)
+	t.Setenv("SYSTEMCTL_HOST_MODE", "copy")
+	src := filepath.Join(t.TempDir(), "winux.exe")
+	payload := bytes.Repeat([]byte("z"), 2048)
+	writeHostFixture(t, src, payload)
+
+	dest, err := sysMaterializeHostFrom(src, "copymode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHostContent(t, dest, payload)
+	si, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	di, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(si, di) {
+		t.Fatal("copy mode must not hard-link the host to the installation")
+	}
+
+	// the point of copy mode: rewriting the source in place (copy /y over
+	// winux.exe) must leave the host untouched
+	writeHostFixture(t, src, []byte("overwritten-in-place"))
+	assertHostContent(t, dest, payload)
+
+	// and an identical copy is still reused instead of being rewritten
+	before, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sysMaterializeHostFrom(src, "copymode"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("an up-to-date copy was replaced")
+	}
+}
+
+func TestMaterializeHostModeSwitchBreaksLink(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "winux.exe")
+	payload := bytes.Repeat([]byte("q"), 4096)
+	writeHostFixture(t, src, payload)
+	probe := filepath.Join(dir, "probe.link")
+	if err := os.Link(src, probe); err != nil {
+		t.Skipf("this volume does not support hard links: %v", err)
+	}
+	os.Remove(probe)
+
+	t.Setenv("SYSTEMCTL_HOST_MODE", "link")
+	dest, err := sysMaterializeHostFrom(src, "switch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	si, _ := os.Stat(src)
+	di, _ := os.Stat(dest)
+	if !os.SameFile(si, di) {
+		t.Fatalf("link mode did not hard-link %s to %s", dest, src)
+	}
+
+	// switching to copy mode must break the existing link, otherwise the host
+	// would still share its data with the installation
+	t.Setenv("SYSTEMCTL_HOST_MODE", "copy")
+	dest2, err := sysMaterializeHostFrom(src, "switch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(dest2, dest) {
+		t.Errorf("host path changed: %q -> %q", dest, dest2)
+	}
+	si2, _ := os.Stat(src)
+	di2, _ := os.Stat(dest2)
+	if os.SameFile(si2, di2) {
+		t.Error("switching to copy mode left the hard link in place")
+	}
+	assertHostContent(t, dest2, payload)
+}
+
 // The generated built-in unit is winux-owned: a stale copy (baked-in winux
 // path from another installation, or a path a test binary left behind) must
 // never win, and a current copy must not be rewritten on every query.

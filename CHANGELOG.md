@@ -3,6 +3,28 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 新增 `SYSTEMCTL_HOST_MODE=link|copy`（宿主落盘方式可选）**：
+  - 背景：硬链接宿主省磁盘、数据归宿主，但**与原安装路径共享同一份数据**，
+    于是服务运行时 `copy /y` 原地覆盖 winux.exe 会被共享冲突拒绝（实测确认，
+    且这是改动前就有的行为——旧注册直接指向 winux.exe）；运行中**删除/重建**
+    宿主文件倒是允许的（映像以 `FILE_SHARE_DELETE` 打开，旧进程继续用旧数据），
+    所以 `move /y` 替换 + `daemon-reload` 也能不停服务升级。
+  - `SYSTEMCTL_HOST_MODE` 选择物化方式：`link`（默认，硬链接优先、跨卷或不
+    支持链接时退化为复制）或 `copy`（永远真副本，与安装目录彻底解耦，服务
+    运行时也能 `copy /y`，代价是每单元一份二进制 ≈ 12.6 MiB）。`copy`/`clone`
+    都接受，其它值打印一条 `ignoring SYSTEMCTL_HOST_MODE=...`（`sync.Once`
+    保证每次运行只一条）后退回 `link`。该变量只在**物化宿主**时读取
+    （`start`/`enable`/`daemon-reload`/`sshd --install`），服务运行本身不需要。
+  - 模式切换立即生效：`sysHostUpToDate` 现在带模式参数——`link → copy` 时
+    **即使内容相同也要打断已有硬链接**重新复制（否则仍共享数据）；`copy →
+    link` 不重写现有副本，等 winux 二进制变化刷新宿主时自然变回链接。
+  - 测试：`core/systemctl_host_test.go` 新增 `TestHostModeSelection`（含非法值
+    回落）、`TestMaterializeHostCopyModeDecouples`（copy 模式下原地改写源文件
+    不影响宿主、内容相同的副本不重写）、`TestMaterializeHostModeSwitchBreaksLink`
+    （link → copy 打断链接且内容不变）。
+  - 文档：README「systemctl 说明」补模式对照表与两种升级做法（先停再覆盖 /
+    `move /y` + `daemon-reload` 不停服务）。
+
 - **2026-09-14 · 服务不再依赖 winux 安装目录：每单元独立服务宿主 + 生成单元自愈**：
   - **问题**：SCM 要求被注册的程序自己讲服务协议（`StartServiceCtrlDispatcher`
     + 控制码），普通控制台程序不讲 → 直接 `sc create` 启动必报 **1053**，所以
