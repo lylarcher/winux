@@ -36,6 +36,9 @@ func withUnitDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("SYSTEMCTL_UNIT_PATH", dir)
+	// keep the generated built-in unit, the state and the service hosts of the
+	// real machine out of the test (they live under %ProgramData%\systemctl)
+	t.Setenv("SYSTEMCTL_ROOT", filepath.Join(t.TempDir(), "systemctl"))
 	return dir
 }
 
@@ -234,5 +237,76 @@ func TestSystemctlLifecycleLinuxSemantics(t *testing.T) {
 	}
 	if code, out, errOut = core.Execute("systemctl", []string{"stop", unit}, strings.NewReader("")); code != 0 {
 		t.Fatalf("stop of a disabled unit: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+}
+
+// TestSystemctlWrappedServiceIsSelfContained proves the point of the per-unit
+// host: a wrapped (Type=simple) service is registered against its own host
+// file under %ProgramData%\systemctl\hosts, not against the winux installation,
+// so it keeps starting after the winux binary has been moved away.
+func TestSystemctlWrappedServiceIsSelfContained(t *testing.T) {
+	if !core.IsAdmin() {
+		t.Skip("installing a Windows service needs administrator rights")
+	}
+	exe := buildWinuxExe(t)
+	dir := t.TempDir()
+	unit := "winuxhosttest"
+	unitPath := filepath.Join(dir, unit+".service")
+	// the child is a plain long-running console program: winux itself must not
+	// be needed at runtime for the host to serve the unit
+	child := filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe")
+	content := "[Unit]\nDescription=winux per-unit host test\n[Service]\nType=simple\nExecStart=\"" +
+		child + "\" -n 300 127.0.0.1\n[Install]\nWantedBy=multi-user.target\n"
+	if err := os.WriteFile(unitPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hostPath := filepath.Join(os.Getenv("ProgramData"), "systemctl", "hosts", unit+".exe")
+	moved := exe + ".moved"
+	t.Setenv("SYSTEMCTL_UNIT_PATH", dir)
+	// the host is materialized from the freshly built binary, not the test exe
+	t.Setenv("WINUX_EXE", exe)
+	t.Cleanup(func() {
+		core.Execute("systemctl", []string{"stop", unit}, strings.NewReader(""))
+		core.Execute("systemctl", []string{"mask", unit}, strings.NewReader(""))
+		core.Execute("systemctl", []string{"unmask", unit}, strings.NewReader(""))
+		os.Remove(unitPath)
+		core.Execute("systemctl", []string{"daemon-reload"}, strings.NewReader(""))
+		os.Remove(hostPath)
+		os.Rename(moved, exe)
+	})
+
+	code, out, errOut := core.Execute("systemctl", []string{"start", unit}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("start: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if _, err := os.Stat(hostPath); err != nil {
+		t.Fatalf("the per-unit host was not materialized at %s: %v", hostPath, err)
+	}
+	code, out, errOut = core.Execute("systemctl", []string{"status", unit, "-l"}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("status: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, hostPath) {
+		t.Errorf("the SCM registration does not point at the per-unit host %s:\n%s", hostPath, out)
+	}
+	if strings.Contains(out, exe) {
+		t.Errorf("the SCM registration still references the winux installation %s:\n%s", exe, out)
+	}
+
+	// now the actual claim: move the winux binary away (upgrade/uninstall) and
+	// the service must still start, because the host owns its own data
+	if err := os.Rename(exe, moved); err != nil {
+		t.Fatalf("cannot move the winux binary away: %v", err)
+	}
+	core.Execute("systemctl", []string{"stop", unit}, strings.NewReader(""))
+	code, out, errOut = core.Execute("systemctl", []string{"start", unit}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("the service no longer starts with winux moved away: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if code, out, errOut = core.Execute("systemctl", []string{"is-active", unit}, strings.NewReader("")); code != 0 {
+		t.Fatalf("the service is not active with winux moved away: code=%d out=%q stderr=%q", code, out, errOut)
+	}
+	if _, err := os.Stat(hostPath); err != nil {
+		t.Errorf("the host disappeared with the winux binary: %v", err)
 	}
 }

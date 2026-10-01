@@ -3,6 +3,51 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 服务不再依赖 winux 安装目录：每单元独立服务宿主 + 生成单元自愈**：
+  - **问题**：SCM 要求被注册的程序自己讲服务协议（`StartServiceCtrlDispatcher`
+    + 控制码），普通控制台程序不讲 → 直接 `sc create` 启动必报 **1053**，所以
+    `wrapped`（`Type=simple`）必须由宿主承接（这就是 `svchost` 的由来，
+    也是 win-service 版绕不开 winux 的原因）。但原实现的 binPath 写成了
+    `"<winux 安装目录>\winux.exe" svchost -unit <unit>`（`sysGetWrapperPath()`
+    = `os.Executable()`），于是**每个已安装服务都被绑死在 winux 安装目录上**：
+    移动、替换、升级或卸载 winux 都会让服务起不来。
+  - **修复**：宿主从安装目录搬到每个单元自己的位置
+    `%ProgramData%\systemctl\hosts\<unit>.exe`，SCM 注册指向它
+    （`core/systemctl_host.go`：`sysMaterializeHost`）。优先 **硬链接**
+    winux.exe（同卷零额外磁盘占用，且链接自己拥有数据，删/换/移 winux
+    后宿主照旧可用），跨卷等链接失败时**复制**；源文件内容变化时按
+    （SameFile → 大小 → SHA-256）比对刷新，服务正在运行导致文件被映射时
+    跳过刷新并 `warn`（服务不受影响，下次 `start` 再刷新）。
+  - **源缺失时不失败**：源 winux.exe 已不存在而宿主文件在 → 保留现有宿主
+    并继续，这正是「winux 卸载了、服务还要能跑」的场景。
+  - **`loginsvc` 的登录计划任务**同样改用该宿主副本，任务不再依赖安装目录。
+  - **`sshd --install`** 改为注册到 `hosts\winux-sshd.exe`（`sshd --service`
+    本身就讲 SCM 协议，无需包装进程）；`--uninstall` 与 `mask`/孤儿清理
+    （`sysRemoveService`）会一并删除宿主文件（best effort，被占用则保留）。
+  - **内置单元的 ExecStart 不再焊死机器路径**：`winux-sshd.service` 的
+    ExecStart 由 `sysGetWrapperPath()`（运行中的 exe，曾被测试二进制写脏成
+    `%TEMP%\...\test.test.exe`）改为稳定的 `hosts\winux-sshd.exe`。
+  - **生成单元自愈**：`%ProgramData%\systemctl\units` 里由 winux 生成的单元
+    文件在内容与当前版本不符时（旧格式、别的机器路径、被测试写脏）会在解析
+    时自动重写；内容已一致则不重写（mtime 不变）；非管理员无法写时
+    `warn` 并回退到内存定义；`SYSTEMCTL_UNIT_PATH` 目录里的同名文件是用户
+    自定义，绝不改写。安装前再校验一次生成文件与服务将启动的内容一致
+    （宿主运行时是重新读盘的），不一致且无法写入则明确报错而不是装出个
+    起不来的服务。
+  - **测试基础设施**：新增 `SYSTEMCTL_ROOT` 覆盖 `%ProgramData%\systemctl`
+    根目录（单元/状态/宿主都随之隔离），`test/systemctl_test.go` 的只读用例
+    改用临时根——此前跑测试会往真实 `%ProgramData%\systemctl\units` 写入
+    指向测试二进制的 `winux-sshd.service`（已在本机复现并修掉）。
+  - **新增测试**：`core/systemctl_host_test.go`（宿主自包含、硬链接优先、
+    内容/SHA-256 刷新、源缺失保留、自身路径 no-op、`sysRemoveHost`、路径
+    比较、生成单元自愈与用户自定义不被覆盖）；`test/systemctl_test.go` 新增
+    **管理员权限下**的端到端用例 `TestSystemctlWrappedServiceIsSelfContained`
+    —— 装一个 `Type=simple` 单元后断言 SCM 的 BinPath 指向 `hosts\<unit>.exe`
+    且不含 winux 安装路径，然后**把 winux.exe 改名移走**再 `start`，服务仍须
+    进入 active 且宿主文件仍在（未提权时自动跳过）。
+  - 文档：README「systemctl 说明」新增「服务不依赖 winux 安装（每单元独立
+    宿主）」；`svchost`/`sshd` 命令表行与「sshd / wssh 说明」同步。
+
 - **2026-09-14 · 新增自定义命令 `open`（交给 Windows 资源管理器/默认应用打开路径）**：
   - **语义**（非 Linux 命令）：winux **不自己打开目录**，而是把解析好的路径
     交给 Windows——目录用**资源管理器**（explorer.exe）打开，文件用默认关联

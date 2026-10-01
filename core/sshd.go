@@ -212,12 +212,16 @@ func sshInstallService(cfg *sshdConfig) int {
 		fmt.Fprintln(os.Stderr, "sshd --install needs administrator rights")
 		return 1
 	}
-	exe, err := os.Executable()
+	// Register the service against this unit's own host copy rather than the
+	// winux installation: the copy owns its data, so the sshd service keeps
+	// starting after winux is moved, upgraded or uninstalled. `sshd --service`
+	// speaks the SCM protocol itself, so no wrapper process is needed here.
+	host, err := sysMaterializeHost(sshServiceName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sshd: %v\n", err)
 		return 1
 	}
-	bin := fmt.Sprintf(`"%s" sshd --service --port %d`, exe, cfg.port)
+	bin := fmt.Sprintf(`"%s" sshd --service --port %d`, host, cfg.port)
 	m, err := mgr.Connect()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sshd: %v\n", err)
@@ -281,6 +285,8 @@ func sshUninstallService() int {
 		s.Control(svc.Stop)
 	}
 	s.Delete()
+	// the service is gone, so its self-contained host copy is no longer needed
+	sysRemoveHost(sshServiceName)
 	fmt.Printf("sshd: service %s removed\n", sshServiceName)
 	return 0
 }

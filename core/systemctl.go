@@ -53,7 +53,16 @@ const (
 	sysTaskPath = `\systemctl\`
 )
 
-func sysRootDir() string        { return filepath.Join(os.Getenv("ProgramData"), "systemctl") }
+// sysRootDir is the unit/state/host root, %ProgramData%\systemctl.
+// SYSTEMCTL_ROOT overrides it: tests use a temporary root so they can never
+// touch the real unit files, state or service hosts of the machine.
+func sysRootDir() string {
+	if r := os.Getenv("SYSTEMCTL_ROOT"); r != "" {
+		return r
+	}
+	return filepath.Join(os.Getenv("ProgramData"), "systemctl")
+}
+
 func sysStateDir() string       { return filepath.Join(sysRootDir(), "state") }
 func sysDefaultUnitDir() string { return filepath.Join(sysRootDir(), "units") }
 
@@ -541,19 +550,18 @@ func sysTargetBackend(u *sysUnit) string {
 	return "wrapped" // winux.exe always embeds the svchost host
 }
 
-func sysGetWrapperPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "winux.exe"
-	}
-	return exe
-}
-
 func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
 	name := u.Name
 	var bin string
 	if backend == "wrapped" {
-		bin = fmt.Sprintf(`"%s" svchost -unit "%s"`, sysGetWrapperPath(), u.Path)
+		// The service must not depend on the winux installation: each unit gets
+		// its own self-contained copy of the host under ProgramData (see
+		// sysMaterializeHost), and SCM is pointed at that file.
+		host, err := sysMaterializeHost(name)
+		if err != nil {
+			return "", err
+		}
+		bin = fmt.Sprintf(`"%s" svchost -unit "%s"`, host, u.Path)
 	} else {
 		exe, args := sysSplitExecStart(u.ExecStart)
 		if strings.ContainsAny(exe, " ") {
@@ -634,6 +642,17 @@ func sysResolveAccount(user string) string {
 func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 	name := u.Name
 	target := sysTargetBackend(u)
+	// A wrapped unit is re-read from disk by its host at run time, so the file
+	// must match the definition we are installing: refresh a stale generated
+	// built-in unit rather than registering a service that would start the
+	// wrong thing (or nothing at all).
+	if b := sysBuiltinUnit(name); b != nil && (u.Path == "" || !sysBuiltinUnitCurrent(u.Path, b)) {
+		mp := sysMaterializeBuiltin(name)
+		if mp == "" || !sysBuiltinUnitCurrent(mp, b) {
+			return "", fmt.Errorf("%s: cannot write the generated unit file (needs administrator rights)", name)
+		}
+		u.Path = mp
+	}
 	st := sysReadState(name)
 	exists, running, _ := sysServiceRuntime(name)
 	_ = running
@@ -691,7 +710,13 @@ func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := sysInstallTask(name, fmt.Sprintf(`"%s" systemctl task-helper %s`, sysGetWrapperPath(), name), sysCurrentUser(), true); err != nil {
+		// the logon task helper runs from the unit's own host as well, so the
+		// task keeps working after winux is moved or removed
+		host, err := sysMaterializeHost(name)
+		if err != nil {
+			return "", err
+		}
+		if err := sysInstallTask(name, fmt.Sprintf(`"%s" systemctl task-helper %s`, host, name), sysCurrentUser(), true); err != nil {
 			return "", err
 		}
 		result = r
@@ -746,6 +771,9 @@ func sysRemoveService(name string) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	s.Delete()
+	// the unit no longer has a service, so drop its self-contained host too
+	// (best effort: a still-running child keeps the file mapped for a moment)
+	sysRemoveHost(name)
 }
 
 func sysCurrentUser() string {
@@ -791,8 +819,11 @@ func sysBuiltinUnit(name string) *sysUnit {
 			Description: "winux SSH server (sshd)",
 			SvcType:     "wrapped",
 			Trigger:     "on-boot",
-			ExecStart:   fmt.Sprintf(`"%s" sshd`, sysGetWrapperPath()),
-			Restart:     "on-failure",
+			// ExecStart points at this unit's own host copy, not at the winux
+			// installation: the sshd service then survives winux being moved,
+			// upgraded or uninstalled (the copy is the same binary).
+			ExecStart: fmt.Sprintf(`"%s" sshd`, sysHostPath("winux-sshd")),
+			Restart:   "on-failure",
 		}
 	}
 	return nil
@@ -835,10 +866,32 @@ func sysMaterializeBuiltin(name string) string {
 	}
 	text := sysBuiltinUnitText(u)
 	p := filepath.Join(dir, name+".service")
-	if err := os.WriteFile(p, []byte(text), 0644); err != nil {
-		return ""
+	if cur, err := os.ReadFile(p); err != nil || string(cur) != text {
+		if err := os.WriteFile(p, []byte(text), 0644); err != nil {
+			return ""
+		}
 	}
 	return p
+}
+
+// sysBuiltinUnitCurrent reports whether the generated unit file still matches
+// the definition this winux would write.
+func sysBuiltinUnitCurrent(path string, b *sysUnit) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return string(data) == sysBuiltinUnitText(b)
+}
+
+// sysSameDir reports whether two paths name the same directory.
+func sysSameDir(a, b string) bool {
+	ca, errA := filepath.Abs(a)
+	cb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return strings.EqualFold(filepath.Clean(ca), filepath.Clean(cb))
 }
 
 // ---------------------------------------------------------------------------
@@ -848,40 +901,56 @@ func sysResolveTarget(name string) (unit *sysUnit, rt *sysRuntime, st *sysUnitSt
 	if !sysValidUnitName(name) {
 		return nil, nil, nil, fmt.Errorf("illegal unit name %q", name)
 	}
+	builtin := sysBuiltinUnit(name)
 	if p := sysFindUnitFile(name); p != "" {
-		if u, e := sysLoadUnit(p); e == nil {
-			unit = u
-		} else if sysBuiltinUnit(name) != nil {
-			// a stale materialized built-in file (older format): rewrite it
-			// and fall back to the in-memory definition if we cannot write.
-			if mp := sysMaterializeBuiltin(name); mp != "" {
-				if u2, e2 := sysLoadUnit(mp); e2 == nil {
-					unit = u2
+		// winux owns the unit files it generates in %ProgramData%\systemctl\
+		// units: a stale copy (an older format, a machine path baked in by
+		// another winux or a test binary, an absolute winux.exe that moved)
+		// must never win over the current definition. Regenerate when the text
+		// differs — writable only when elevated, otherwise keep the in-memory
+		// definition and say why. A user-written file of the same name in a
+		// SYSTEMCTL_UNIT_PATH directory is left alone.
+		if builtin != nil && sysSameDir(filepath.Dir(p), sysDefaultUnitDir()) && !sysBuiltinUnitCurrent(p, builtin) {
+			mp := sysMaterializeBuiltin(name)
+			if mp == "" {
+				warn("systemctl", "%s: cannot refresh the generated unit file %s (needs administrator rights)", name, p)
+				builtin.Path = p
+				unit = builtin
+			} else {
+				p = mp
+			}
+		}
+		if unit == nil {
+			u, e := sysLoadUnit(p)
+			if e == nil {
+				unit = u
+			} else if builtin != nil {
+				// an unparsable generated file: rewrite it, else fall back to
+				// the in-memory definition
+				if mp := sysMaterializeBuiltin(name); mp != "" {
+					if u2, e2 := sysLoadUnit(mp); e2 == nil {
+						unit = u2
+					} else {
+						return nil, nil, nil, e2
+					}
 				} else {
-					return nil, nil, nil, e2
+					unit = builtin
 				}
 			} else {
-				unit = sysBuiltinUnit(name)
+				return nil, nil, nil, e
+			}
+		}
+	} else if builtin != nil {
+		// no file yet: materialize it so wrapped units get a real path for
+		// `svchost -unit` (falls back to the in-memory definition)
+		if mp := sysMaterializeBuiltin(name); mp != "" {
+			if u2, e2 := sysLoadUnit(mp); e2 == nil {
+				unit = u2
+			} else {
+				unit = builtin
 			}
 		} else {
-			return nil, nil, nil, e
-		}
-	}
-	if sysBuiltinUnit(name) != nil {
-		// Built-in units (winux-sshd) carry an absolute ExecStart pointing at
-		// the winux.exe that materialized them. If that binary has moved
-		// (D:\my-tools\...), rewrite the file with the running exe and reload
-		// it, so the service always starts the winux the user is actually
-		// running. Writable only when elevated; otherwise status shows the
-		// stale path and hints at `sudo systemctl daemon-reload`.
-		if mp := sysMaterializeBuiltin(name); mp != "" {
-			if unit == nil || unit.Path != mp || unit.ExecStart != sysBuiltinUnit(name).ExecStart {
-				if u2, e2 := sysLoadUnit(mp); e2 == nil {
-					unit = u2
-				} else {
-					return nil, nil, nil, e2
-				}
-			}
+			unit = builtin
 		}
 	}
 	rt = sysGetRuntime(name)

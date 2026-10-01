@@ -226,8 +226,8 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `psql` | 纯 Go PostgreSQL 客户端（**无需安装 psql/PostgreSQL**，wire v3 协议）：`-h --port -U -d -W -w -c -f -t -A -q --ssl --timeout`；认证支持明文/MD5/SCRAM-SHA-256（PGPASSWORD 或 `-W` 隐藏输入）；psql 风格对齐表格，`-t` 只元组、`-A` 无对齐；REPL 支持 `\q \l \dt \d NAME \c DB \?`（见「psql 说明」） |
 | `sqlite` | SQLite 客户端（**无需安装 sqlite3 CLI**，内嵌纯 Go 驱动 modernc.org/sqlite）：`sqlite [OPTIONS] [DBFILE] [SQL]`，缺省 DBFILE 用 `:memory:`；`-r/--readonly`、`-json/-line/-list/--column` 输出、`--separator --nullvalue --cmd -v`；REPL 点命令 `.tables .schema .databases .indexes .dump .mode .headers .read`（见「sqlite 说明」） |
 | `systemctl` | systemd 风格服务管理（纯 Go，不装 OpenSSH 之外任何组件）：`start/stop/restart/enable/disable/status/is-active/is-enabled/list-units/list-unit-files/cat/journalctl/mask/unmask/daemon-reload`；后端为 Windows 服务（svc 或内置 svchost）与计划任务（schtasks），单元文件 *.service 放 `%ProgramData%\systemctl\units`（见「systemctl 说明」） |
-| `svchost` | 内置 Windows 服务宿主（替代外部 wrapper）：`svchost -unit <unit.service> [-debug]`；由 systemctl 的 wrapped 后端自动调用，托管 ExecStart 子进程并转发输出到 `<unit>.wrapper.log` |
-| `sshd` | 纯 Go SSH 服务端（**无需安装 Windows OpenSSH**）：默认监听 **1022** 端口；`--auth local` 用本地 Windows 账号密码校验（LogonUserW），`--auth any` 仅测试用；连入后是 winux sh 环境（exec 请求跑 `winux sh -c`、shell 请求挂 ConPTY 伪控制台）；`sshd --install` 注册并启动 **winux-sshd** 服务（systemctl 可管理），host key 自动生成于 `%ProgramData%\winux\sshd_host_ed25519`（见「sshd / wssh 说明」） |
+| `svchost` | 内置 Windows 服务宿主（替代外部 wrapper）：`svchost -unit <unit.service> [-debug]`；由 systemctl 的 wrapped 后端自动调用，托管 ExecStart 子进程并转发输出到 `<unit>.wrapper.log`；服务注册指向**每单元独立宿主** `%ProgramData%\systemctl\hosts\<unit>.exe`（硬链接到 winux.exe，winux 卸载后服务照旧启动） |
+| `sshd` | 纯 Go SSH 服务端（**无需安装 Windows OpenSSH**）：默认监听 **1022** 端口；`--auth local` 用本地 Windows 账号密码校验（LogonUserW），`--auth any` 仅测试用；连入后是 winux sh 环境（exec 请求跑 `winux sh -c`、shell 请求挂 ConPTY 伪控制台）；`sshd --install` 注册并启动 **winux-sshd** 服务（systemctl 可管理，注册指向 `%ProgramData%\systemctl\hosts\winux-sshd.exe` 自包含宿主，不依赖 winux 安装目录），host key 自动生成于 `%ProgramData%\winux\sshd_host_ed25519`（见「sshd / wssh 说明」） |
 | `wssh` | 纯 Go SSH 客户端（**无需安装 OpenSSH**）：`wssh [user@]host[:port] [command]`，默认端口 **1022**；密码认证（`-p` 或交互提示），可连 winux sshd 或任意 OpenSSH 服务器；交互模式请求远端 pty（ConPTY）并转发本机终端（见「sshd / wssh 说明」） |
 | `open` | **自定义命令**（非 Linux 命令）：把路径交给 Windows 资源管理器/默认应用打开——目录用资源管理器打开，文件用默认程序打开；`open .` 当前目录、`open ..`/`open ../` 父目录、`open ~` 用户目录；支持一次给多个路径（见「open 说明」） |
 
@@ -717,7 +717,30 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
   .service 文件——`systemctl status sshd` / `start sshd` / `cat sshd`
   直接可用（内部映射到服务名 **winux-sshd**，首次使用自动物化单元文件
   到 `%ProgramData%\systemctl\units\winux-sshd.service`；只读命令在非
-  管理员下也能解析，变更命令用 `winux sudo systemctl ...`）。
+  管理员下也能解析，变更命令用 `winux sudo systemctl ...`）。这个生成的
+  单元文件由 winux 拥有：内容与当前版本不符（旧格式、别的机器路径、被
+  测试二进制写脏）时会在解析时自动重写；要自定义请把自己的
+  `winux-sshd.service` 放进 `SYSTEMCTL_UNIT_PATH` 目录（该目录中的同名文件
+  不会被改写）。
+- **服务不依赖 winux 安装（每单元独立宿主）**：SCM 要求被注册的程序自己
+  讲服务协议（`StartServiceCtrlDispatcher` + 控制码处理），否则启动报
+  **1053**——普通控制台程序不讲，所以 `wrapped`（`Type=simple`）必须由宿主
+  承接。这个宿主**不放在 winux 安装目录**，而是每个单元在
+  `%ProgramData%\systemctl\hosts\<unit>.exe` 拥有自己的一份（优先**硬链接**
+  到 winux.exe，跨卷时退化为复制），SCM 注册指向它：
+  - winux 被移动/删除/替换（升级、卸载）后，已安装的服务**照旧能启动**，
+    因为宿主文件自己拥有数据；`systemctl` 只用来管理，不是服务运行的前提。
+  - 源 winux.exe 内容变化时（升级）宿主会在下次 `start`/`enable`/
+    `daemon-reload` 时按内容比对刷新；正在运行而文件被映射时跳过刷新并给出
+    提示，服务不受影响。
+  - `sshd --install` 也注册这份宿主副本（`sshd --service` 本身讲 SCM 协议，
+    不需要包装进程），所以 sshd 服务同样不依赖 winux 安装目录。
+  - 单元自己的 `ExecStart` 若写的就是 winux.exe（自定义单元），那它按定义仍
+    依赖 winux——框架能保证的只是**宿主**这一层独立。
+  - **升级 winux 时**：服务在运行会占用安装目录的 winux.exe（映像是被映射
+    的），所以先 `winux sudo systemctl stop sshd`，再覆盖安装目录的
+    winux.exe，然后 `start`。硬链接下两者共享同一份数据，起来就是新二进制；
+    若是替换成新文件（`move /y`），`start` 时会按内容比对把宿主刷新成新版。
 - **示例**：把 winux sshd 装成开机自启服务
   `winux sudo systemctl enable sshd` + `start sshd`
   （或等价的 `winux sshd --install`，两者管理同一个 winux-sshd 服务）。
@@ -743,8 +766,11 @@ Windows 上**不需要安装 OpenSSH 组件**。
 - **服务安装**：`winux sshd --install` 以管理员注册并启动 **winux-sshd**
   服务（`--uninstall` 移除），也可直接用
   `winux sudo systemctl start sshd` / `status sshd` / `journalctl -u sshd`
-  管理同一个服务。前台跑 `winux sshd` 即可（`--port N`、`--listen HOST`、
-  `--log FILE`）。
+  管理同一个服务。注册的命令行指向**这个单元自己的宿主副本**
+  `%ProgramData%\systemctl\hosts\winux-sshd.exe`（`sshd --service` 讲 SCM
+  协议，不需要包装进程）——winux 安装目录被移动/替换/删除后该服务仍可启动，
+  `systemctl` 只是管理入口。前台跑 `winux sshd` 即可（`--port N`、
+  `--listen HOST`、`--log FILE`）。
 - **客户端 `wssh`**：`winux wssh [-p 密码] [-P 端口] [-l 用户] user@host[:port] [command]`
   ——不给命令进交互 shell（请求远端 pty，本机进入 raw 模式，窗口变化自动
   推送 `window-change`，pty 尺寸按本机控制台的实际行列上报）；给命令则执行
