@@ -53,11 +53,13 @@ func sysHostPath(name string) string {
 	return filepath.Join(sysHostDir(), name+".exe")
 }
 
-// sysMaterializeHost makes sure the unit owns a self-contained service host and
-// returns its path. The source binary is the running winux.exe, or WINUX_EXE
-// when set (the same override the remote-exec children use, which is also how
-// tests point at a freshly built binary).
-func sysMaterializeHost(name string) (string, error) {
+// sysMaterializeHostMode makes sure the unit owns a self-contained service host
+// and returns its path. The unit's own `HostMode=` in [Service] wins, then
+// SYSTEMCTL_HOST_MODE, then the "link" default (pass "" for a unit with no
+// override). The source binary is the running winux.exe, or WINUX_EXE when set
+// (the same override the remote-exec children use, which is also how tests
+// point at a freshly built binary).
+func sysMaterializeHostMode(name, unitMode string) (string, error) {
 	src := os.Getenv("WINUX_EXE")
 	if src == "" {
 		exe, err := os.Executable()
@@ -66,10 +68,14 @@ func sysMaterializeHost(name string) (string, error) {
 		}
 		src = exe
 	}
-	return sysMaterializeHostFrom(src, name)
+	return sysMaterializeHostFrom(src, name, sysHostModeFor(unitMode))
 }
 
-func sysMaterializeHostFrom(src, name string) (string, error) {
+func sysMaterializeHostFrom(src, name, mode string) (string, error) {
+	if mode == "" {
+		// no unit-level override: follow the environment (default "link")
+		mode = sysHostMode()
+	}
 	dest := sysHostPath(name)
 	if sysSamePath(src, dest) {
 		// already running from our own host file
@@ -86,7 +92,6 @@ func sysMaterializeHostFrom(src, name string) (string, error) {
 		}
 		return "", fmt.Errorf("cannot create the service host %s: %v", dest, err)
 	}
-	mode := sysHostMode()
 	if sysHostUpToDate(src, dest, mode) {
 		return dest, nil
 	}
@@ -127,9 +132,11 @@ func sysMaterializeHostFrom(src, name string) (string, error) {
 //	                 start. Costs one full binary per unit (~13 MiB).
 //
 // SYSTEMCTL_HOST_MODE selects the mode (link|copy); an empty or unrecognized
-// value means "link". The mode only matters when a host is materialized, i.e.
-// at `systemctl start`/`enable`/`daemon-reload` or `sshd --install` — never at
-// service start-up, so the services themselves need no environment.
+// value means "link". A unit can override it per service with `HostMode=` in
+// its [Service] section (see sysHostModeFor). The mode only matters when a host
+// is materialized, i.e. at `systemctl start`/`enable`/`daemon-reload` or
+// `sshd --install` — never at service start-up, so the services themselves need
+// no environment.
 func sysHostMode() string {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYSTEMCTL_HOST_MODE"))) {
 	case "copy", "clone":
@@ -143,6 +150,32 @@ func sysHostMode() string {
 		})
 		return "link"
 	}
+}
+
+// sysHostModeFor resolves the effective mode for one unit: the unit's own
+// `HostMode=` wins over SYSTEMCTL_HOST_MODE, which wins over the "link"
+// default. A value the unit level does not recognize falls through to the
+// environment (sysLoadUnit already warns about it; this keeps direct callers
+// and hand-written values safe too).
+func sysHostModeFor(unitMode string) string {
+	if unitMode != "" {
+		if m, ok := sysParseHostMode(unitMode); ok {
+			return m
+		}
+	}
+	return sysHostMode()
+}
+
+// sysParseHostMode normalizes a mode spelling from a unit file. ok is false for
+// an unknown value (the caller warns and falls back to the environment).
+func sysParseHostMode(v string) (mode string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "copy", "clone":
+		return "copy", true
+	case "link", "hardlink", "hard":
+		return "link", true
+	}
+	return "", false
 }
 
 // hostModeWarn keeps the "unrecognized mode" warning to one line per run.

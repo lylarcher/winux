@@ -688,7 +688,8 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
 - **单元解析**：`[Unit] Description=`、`[Service] Type=simple|wrapped|native`
   （默认 wrapped）、`ExecStart=`（引号感知拆分，首个 token 为程序）、
   `WorkingDirectory=`、`Restart=on-failure|always|no`、`KillTimeoutSec=`、
-  `Environment=A=1 B="two words"`、`[Install] WantedBy=`。
+  `Environment=A=1 B="two words"`、`HostMode=link|copy`（winux 扩展，见下面的
+  服务宿主；缺省跟随环境变量 `SYSTEMCTL_HOST_MODE`）、`[Install] WantedBy=`。
 - **后端映射**：`wrapped` = 内置 `svchost` 服务宿主（托管 ExecStart 子进程，
   输出转发到 `<unit>.wrapper.log`，`journalctl -u` 可读）；`native` = 服务
   直接以 ExecStart 的命令行注册；`Type=simple` 且 ExecStart 为空 = 计划任务
@@ -735,21 +736,33 @@ modernc.org/sqlite**（无 CGO、跨平台），所以不需要安装 sqlite3 CL
     不需要包装进程），所以 sshd 服务同样不依赖 winux 安装目录。
   - 单元自己的 `ExecStart` 若写的就是 winux.exe（自定义单元），那它按定义仍
     依赖 winux——框架能保证的只是**宿主**这一层独立。
-  - **宿主落盘方式由 `SYSTEMCTL_HOST_MODE` 选择**（`link`|`copy`，默认
-    `link`；只在物化宿主时起作用，即 `start`/`enable`/`daemon-reload`/
-    `sshd --install`，服务运行时不需要该变量）：
+  - **宿主落盘方式**可选，**按单元配置**（`[Service] HostMode=`）或全局配置
+    （环境变量 `SYSTEMCTL_HOST_MODE`）：优先级
+    **单元 `HostMode=` > `SYSTEMCTL_HOST_MODE` > 默认 `link`**。取值
+    `link`|`copy`（也接受 `clone`/`hard`/`hardlink` 写法；无法识别的值会打印
+    一条提示并被忽略）。该设置只在**物化宿主**时起作用，即
+    `systemctl start`/`enable`/`daemon-reload`/`sshd --install`，服务运行时
+    不需要环境变量：
 
     | 模式 | 宿主与安装目录的关系 | 升级 winux（覆盖 `winux.exe`） | 代价 |
     |---|---|---|---|
     | `link`（默认） | **硬链接**（同卷；跨卷/不支持链接时自动退化为复制） | 服务运行时 `copy /y` 原地覆盖会被拒（共享冲突）；先 `stop` 或改用 `move /y` 替换。链接共享数据，服务下次起就是新二进制 | 每单元 ≈ 0 字节 |
     | `copy` | 独立**副本**，彻底解耦 | 服务运行时也能直接 `copy /y`；各服务在下次 `start` 时才换新二进制 | 每单元一份二进制（stamp 版 ≈ 12.6 MiB） |
 
+    ```ini
+    # 只让这一个服务用副本（其余仍走默认/环境变量）
+    [Service]
+    Type=simple
+    ExecStart=C:\tools\agent.exe --run
+    HostMode=copy
+    ```
     - 两种模式都满足「删/换/移 winux 安装目录后服务照旧能启动」。
     - 切换模式立即生效：`link → copy` 会在下次物化时**打断已有硬链接**改成
       真副本（否则仍共享数据）；`copy → link` 不必重写现有副本，等 winux
       二进制内容变化（升级）刷新宿主时自然变回链接。
-    - 设 `link`/`copy` 以外的值会打印一条 `ignoring SYSTEMCTL_HOST_MODE=...`
-      并退回 `link`。
+    - 全局设 `SYSTEMCTL_HOST_MODE` 的非 `link`/`copy` 值会打印一条
+      `ignoring SYSTEMCTL_HOST_MODE=...` 并退回 `link`；单元里的非法值打印
+      `<unit>: ignoring unknown HostMode=...` 后按环境变量/默认处理。
   - **升级 winux 的两种做法**（当前注册指向宿主文件，见上表）：
     ```bat
     :: 一、先停服务再原地覆盖（最稳；copy 模式下不停也行）

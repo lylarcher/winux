@@ -3,6 +3,27 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-09-14 · 宿主模式支持按单元配置（`[Service] HostMode=`）**：
+  - `HostMode=link|copy` 写进 `.service` 的 `[Service]` 段即可只对**这一个**
+    服务生效；优先级 **单元 `HostMode=` > `SYSTEMCTL_HOST_MODE` > `link`**。
+    `sysUnit` 增加 `HostMode` 字段（`sysLoadUnit` 解析并归一化，无法识别的值
+    打印 `<unit>: ignoring unknown HostMode=...` 后留空按环境变量处理），
+    生效点为物化宿主：`sysInstallServiceBackend`（`wrapped` 分支）与
+    `loginsvc` 的登录任务助手都改用 `sysMaterializeHostMode(name, u.HostMode)`。
+  - `sshd --install` 之前只认环境变量、完全不读单元文件，会出现「自定义
+    `winux-sshd.service` 里写了 `HostMode=copy`，但 `sshd --install` 仍按 link」
+    的不一致；现在它会先 best-effort 解析 `winux-sshd` 单元（只读，失败则忽略）
+    取用其 `HostMode=`，再回退环境变量/默认。
+  - `sysBuiltinUnitText` 在 `HostMode` 非空时输出该键（内置单元目前不预设，
+    用户放进 `SYSTEMCTL_UNIT_PATH` 的同名单元仍然优先且不被改写）。
+  - `sysHostModeFor` 对传入值再做一次安全校验：非法值回退环境变量，避免调用
+    方直接传原始字符串时落进「既不是 link 也不是 copy」的歧路。
+  - 测试：`sysMaterializeHostFrom` 改为显式接收模式参数（测试不再靠环境变量
+    摆布），新增 `TestParseHostModeSpellings`、`TestHostModeForPrecedence`
+    （单元 > 环境 > 默认，含非法值）、`TestUnitFileHostModeSelectsCopyMode`
+    （真实单元文件里 `HostMode=copy` → 解析结果 + 物化出的宿主确实不是硬链接；
+    非法值被忽略）。
+
 - **2026-09-14 · 新增 `SYSTEMCTL_HOST_MODE=link|copy`（宿主落盘方式可选）**：
   - 背景：硬链接宿主省磁盘、数据归宿主，但**与原安装路径共享同一份数据**，
     于是服务运行时 `copy /y` 原地覆盖 winux.exe 会被共享冲突拒绝（实测确认，

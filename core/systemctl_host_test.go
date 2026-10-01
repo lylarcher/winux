@@ -52,7 +52,7 @@ func TestMaterializeHostIsSelfContained(t *testing.T) {
 	payload := []byte("winux-service-host-payload")
 	writeHostFixture(t, src, payload)
 
-	dest, err := sysMaterializeHostFrom(src, "demo")
+	dest, err := sysMaterializeHostFrom(src, "demo", "link")
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestMaterializeHostIsSelfContained(t *testing.T) {
 
 	// re-materializing with the source gone keeps the existing host instead of
 	// failing — the link or copy owns the data
-	again, err := sysMaterializeHostFrom(src, "demo")
+	again, err := sysMaterializeHostFrom(src, "demo", "link")
 	if err != nil {
 		t.Fatalf("materialize with the source gone: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestMaterializeHostReusesAndRefreshes(t *testing.T) {
 	v1 := bytes.Repeat([]byte("a"), 4096)
 	writeHostFixture(t, src, v1)
 
-	dest, err := sysMaterializeHostFrom(src, "demo2")
+	dest, err := sysMaterializeHostFrom(src, "demo2", "link")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMaterializeHostReusesAndRefreshes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := sysMaterializeHostFrom(src, "demo2")
+	again, err := sysMaterializeHostFrom(src, "demo2", "link")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestMaterializeHostReusesAndRefreshes(t *testing.T) {
 	// same size, different content: only a content comparison can notice
 	v2 := bytes.Repeat([]byte("b"), 4096)
 	writeHostFixture(t, src, v2)
-	if _, err := sysMaterializeHostFrom(src, "demo2"); err != nil {
+	if _, err := sysMaterializeHostFrom(src, "demo2", "link"); err != nil {
 		t.Fatal(err)
 	}
 	assertHostContent(t, dest, v2)
@@ -121,7 +121,7 @@ func TestMaterializeHostReusesAndRefreshes(t *testing.T) {
 	// a size change is enough to notice too
 	v3 := append(bytes.Repeat([]byte("c"), 100), []byte("tail")...)
 	writeHostFixture(t, src, v3)
-	if _, err := sysMaterializeHostFrom(src, "demo2"); err != nil {
+	if _, err := sysMaterializeHostFrom(src, "demo2", "link"); err != nil {
 		t.Fatal(err)
 	}
 	assertHostContent(t, dest, v3)
@@ -139,7 +139,7 @@ func TestMaterializeHostPrefersHardLink(t *testing.T) {
 	}
 	os.Remove(probe)
 
-	dest, err := sysMaterializeHostFrom(src, "demo3")
+	dest, err := sysMaterializeHostFrom(src, "demo3", "link")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestMaterializeHostFromItsOwnPath(t *testing.T) {
 	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)
 	self := filepath.Join(hostDir, "demo4.exe")
 	writeHostFixture(t, self, []byte("self"))
-	got, err := sysMaterializeHostFrom(self, "demo4")
+	got, err := sysMaterializeHostFrom(self, "demo4", "link")
 	if err != nil {
 		t.Fatalf("materialize onto itself: %v", err)
 	}
@@ -217,15 +217,122 @@ func TestHostModeSelection(t *testing.T) {
 	}
 }
 
+func TestParseHostModeSpellings(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"link", "link", true},
+		{" LINK ", "link", true},
+		{"hard", "link", true},
+		{"hardlink", "link", true},
+		{"copy", "copy", true},
+		{"Clone", "copy", true},
+		{"", "", false},
+		{"bogus", "", false},
+	}
+	for _, c := range cases {
+		got, ok := sysParseHostMode(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("sysParseHostMode(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// A unit's own HostMode= wins over SYSTEMCTL_HOST_MODE, which wins over "link".
+func TestHostModeForPrecedence(t *testing.T) {
+	t.Setenv("SYSTEMCTL_HOST_MODE", "copy")
+	if got := sysHostModeFor("link"); got != "link" {
+		t.Errorf("a unit HostMode=link should win over the environment: got %q", got)
+	}
+	if got := sysHostModeFor(""); got != "copy" {
+		t.Errorf("without a unit value the environment applies: got %q", got)
+	}
+	t.Setenv("SYSTEMCTL_HOST_MODE", "bogus") // unrecognized: warn once, use link
+	if got := sysHostModeFor(""); got != "link" {
+		t.Errorf("a bogus environment value should mean link: got %q", got)
+	}
+	if got := sysHostModeFor("bogus"); got != "link" {
+		t.Errorf("a bogus unit value should mean link: got %q", got)
+	}
+}
+
+// A unit file may pick the mode per service: `HostMode=` in [Service] is read
+// when the unit is loaded and applied when its host is materialized.
+func TestUnitFileHostModeSelectsCopyMode(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SYSTEMCTL_ROOT", root)
+	t.Setenv("SYSTEMCTL_UNIT_PATH", "")
+	t.Setenv("SYSTEMCTL_HOST_DIR", filepath.Join(t.TempDir(), "hosts"))
+	t.Setenv("SYSTEMCTL_HOST_MODE", "") // only the unit file decides here
+	src := filepath.Join(t.TempDir(), "winux.exe")
+	payload := bytes.Repeat([]byte("m"), 1024)
+	writeHostFixture(t, src, payload)
+	t.Setenv("WINUX_EXE", src)
+
+	dir := filepath.Join(root, "units")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unit := func(name, extra string) string {
+		body := "[Unit]\nDescription=host mode demo\n\n[Service]\nType=simple\n" +
+			"ExecStart=C:\\Windows\\System32\\ping.exe -n 300 127.0.0.1\n" + extra +
+			"\n[Install]\nWantedBy=multi-user.target\n"
+		p := filepath.Join(dir, name+".service")
+		writeHostFixture(t, p, []byte(body))
+		return p
+	}
+
+	p := unit("hostmodedemo", "HostMode=copy\n")
+	u, _, _, err := sysResolveTarget("hostmodedemo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(u.Path, p) {
+		t.Fatalf("resolved %q, want %q", u.Path, p)
+	}
+	if u.HostMode != "copy" {
+		t.Fatalf("HostMode=%q, want copy", u.HostMode)
+	}
+
+	dest, err := sysMaterializeHostMode(u.Name, u.HostMode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHostContent(t, dest, payload)
+	si, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	di, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(si, di) {
+		t.Error("HostMode=copy produced a hard link to the installation")
+	}
+
+	// an unknown value is ignored (with a warning) and falls back to
+	// SYSTEMCTL_HOST_MODE / the default
+	unit("hostmodebad", "HostMode=sideways\n")
+	ub, _, _, err := sysResolveTarget("hostmodebad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ub.HostMode != "" {
+		t.Errorf("an unknown HostMode should be ignored, got %q", ub.HostMode)
+	}
+}
+
 func TestMaterializeHostCopyModeDecouples(t *testing.T) {
 	hostDir := t.TempDir()
 	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)
-	t.Setenv("SYSTEMCTL_HOST_MODE", "copy")
 	src := filepath.Join(t.TempDir(), "winux.exe")
 	payload := bytes.Repeat([]byte("z"), 2048)
 	writeHostFixture(t, src, payload)
 
-	dest, err := sysMaterializeHostFrom(src, "copymode")
+	dest, err := sysMaterializeHostFrom(src, "copymode", "copy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +359,7 @@ func TestMaterializeHostCopyModeDecouples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sysMaterializeHostFrom(src, "copymode"); err != nil {
+	if _, err := sysMaterializeHostFrom(src, "copymode", "copy"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(dest)
@@ -277,8 +384,7 @@ func TestMaterializeHostModeSwitchBreaksLink(t *testing.T) {
 	}
 	os.Remove(probe)
 
-	t.Setenv("SYSTEMCTL_HOST_MODE", "link")
-	dest, err := sysMaterializeHostFrom(src, "switch")
+	dest, err := sysMaterializeHostFrom(src, "switch", "link")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +396,7 @@ func TestMaterializeHostModeSwitchBreaksLink(t *testing.T) {
 
 	// switching to copy mode must break the existing link, otherwise the host
 	// would still share its data with the installation
-	t.Setenv("SYSTEMCTL_HOST_MODE", "copy")
-	dest2, err := sysMaterializeHostFrom(src, "switch")
+	dest2, err := sysMaterializeHostFrom(src, "switch", "copy")
 	if err != nil {
 		t.Fatal(err)
 	}

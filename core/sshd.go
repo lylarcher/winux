@@ -216,7 +216,13 @@ func sshInstallService(cfg *sshdConfig) int {
 	// winux installation: the copy owns its data, so the sshd service keeps
 	// starting after winux is moved, upgraded or uninstalled. `sshd --service`
 	// speaks the SCM protocol itself, so no wrapper process is needed here.
-	host, err := sysMaterializeHost(sshServiceName)
+	// A unit file for winux-sshd (built-in or user-written) may carry its own
+	// HostMode=; resolution is read-only and best effort.
+	unitMode := ""
+	if u, _, _, rerr := sysResolveTarget(sshServiceName); rerr == nil && u != nil {
+		unitMode = u.HostMode
+	}
+	host, err := sysMaterializeHostMode(sshServiceName, unitMode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sshd: %v\n", err)
 		return 1

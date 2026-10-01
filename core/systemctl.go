@@ -112,6 +112,7 @@ type sysUnit struct {
 	Restart        string
 	KillTimeoutSec string
 	Env            []string
+	HostMode       string // "" (use SYSTEMCTL_HOST_MODE), "link" or "copy"
 	Hash           string
 }
 
@@ -221,6 +222,19 @@ func sysLoadUnit(path string) (*sysUnit, error) {
 	if restart == "" {
 		restart = "no"
 	}
+	// Per-unit host mode (winux extension): how this unit's service host is
+	// materialized (hosts\<unit>.exe). "link" (hard link, default) or "copy"
+	// (real copy, decoupled from the winux installation). Falls back to
+	// SYSTEMCTL_HOST_MODE and then to "link".
+	hostMode := ""
+	if v := sysIniFirst(sec, "hostmode"); v != "" {
+		m, ok := sysParseHostMode(v)
+		if !ok {
+			warn("systemctl", "%s: ignoring unknown HostMode=%s (use link or copy)", name, v)
+		} else {
+			hostMode = m
+		}
+	}
 	u := &sysUnit{
 		Name:           name,
 		Path:           path,
@@ -233,6 +247,7 @@ func sysLoadUnit(path string) (*sysUnit, error) {
 		Restart:        strings.ToLower(restart),
 		KillTimeoutSec: sysIniFirst(sec, "killtimeoutsec"),
 		Env:            env,
+		HostMode:       hostMode,
 	}
 	// 16-char hash of the file content (used to detect changes)
 	sum := sha256Hex(data)
@@ -556,8 +571,9 @@ func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
 	if backend == "wrapped" {
 		// The service must not depend on the winux installation: each unit gets
 		// its own self-contained copy of the host under ProgramData (see
-		// sysMaterializeHost), and SCM is pointed at that file.
-		host, err := sysMaterializeHost(name)
+		// sysMaterializeHost), and SCM is pointed at that file. The unit's own
+		// HostMode= decides how it lands on disk (link or copy).
+		host, err := sysMaterializeHostMode(name, u.HostMode)
 		if err != nil {
 			return "", err
 		}
@@ -697,6 +713,9 @@ func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 		if len(u.Env) > 0 {
 			fmt.Fprintf(os.Stderr, "systemctl: warning: %s: login-task backend ignores Environment=\n", name)
 		}
+		if u.HostMode != "" {
+			fmt.Fprintf(os.Stderr, "systemctl: warning: %s: login-task backend has no service host, ignored HostMode=%s\n", name, u.HostMode)
+		}
 		if err := sysInstallTask(name, u.ExecStart, sysCurrentUser(), true); err != nil {
 			return "", err
 		}
@@ -712,7 +731,7 @@ func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 		}
 		// the logon task helper runs from the unit's own host as well, so the
 		// task keeps working after winux is moved or removed
-		host, err := sysMaterializeHost(name)
+		host, err := sysMaterializeHostMode(name, u.HostMode)
 		if err != nil {
 			return "", err
 		}
@@ -724,6 +743,9 @@ func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 		if len(u.Env) > 0 {
 			fmt.Fprintf(os.Stderr, "systemctl: warning: %s: task backend ignores Environment=\n", name)
 		}
+		if u.HostMode != "" {
+			fmt.Fprintf(os.Stderr, "systemctl: warning: %s: task backend has no service host, ignored HostMode=%s\n", name, u.HostMode)
+		}
 		if err := sysInstallTask(name, u.ExecStart, "SYSTEM", false); err != nil {
 			return "", err
 		}
@@ -733,6 +755,10 @@ func sysInstallUnit(u *sysUnit, adopt bool) (string, error) {
 			result = "installed"
 		}
 	default: // wrapped / native
+		if target == "native" && u.HostMode != "" {
+			// a native service registers ExecStart itself: there is no winux host
+			fmt.Fprintf(os.Stderr, "systemctl: warning: %s: native service has no winux host, ignored HostMode=%s\n", name, u.HostMode)
+		}
 		result, err := sysInstallServiceBackend(u, target)
 		if err != nil {
 			return "", err
@@ -842,6 +868,9 @@ func sysBuiltinUnitText(u *sysUnit) string {
 	}
 	b.WriteString("Type=" + t + "\n")
 	b.WriteString("ExecStart=" + u.ExecStart + "\n")
+	if u.HostMode != "" {
+		b.WriteString("HostMode=" + u.HostMode + "\n")
+	}
 	if u.Restart != "" {
 		b.WriteString("Restart=" + u.Restart + "\n")
 	}
