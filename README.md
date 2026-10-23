@@ -230,6 +230,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `sshd` | 纯 Go SSH 服务端（**无需安装 Windows OpenSSH**）：默认监听 **1022** 端口；`--auth local` 用本地 Windows 账号密码校验（LogonUserW），`--auth any` 仅测试用；连入后是 winux sh 环境（exec 请求跑 `winux sh -c`、shell 请求挂 ConPTY 伪控制台）；`sshd --install` 注册并启动 **winux-sshd** 服务（systemctl 可管理，注册指向 `%ProgramData%\systemctl\hosts\winux-sshd.exe` 自包含宿主，不依赖 winux 安装目录），host key 自动生成于 `%ProgramData%\winux\sshd_host_ed25519`（见「sshd / wssh 说明」） |
 | `wssh` | 纯 Go SSH 客户端（**无需安装 OpenSSH**）：`wssh [user@]host[:port] [command]`，默认端口 **1022**；密码认证（`-p` 或交互提示），可连 winux sshd 或任意 OpenSSH 服务器；交互模式请求远端 pty（ConPTY）并转发本机终端（见「sshd / wssh 说明」） |
 | `open` | **自定义命令**（非 Linux 命令）：把路径交给 Windows 资源管理器/默认应用打开——目录用资源管理器打开，文件用默认程序打开；`open .` 当前目录、`open ..`/`open ../` 父目录、`open ~` 用户目录；支持一次给多个路径（见「open 说明」） |
+| `paths` | **自定义命令**（非 Linux 命令）：Windows 常用文件/目录路径的关键词表。`winux paths` 列出全部，`winux paths -q 关键词` 只输出路径（脚本用），`--json`/`-e`/`-s TEXT` 按需过滤；**关键词本身也能当命令用**：`winux hosts` 直接打印 hosts 的路径、状态和常用操作（见「常用路径提醒」） |
 
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -834,6 +835,64 @@ Windows 上**不需要安装 OpenSSH 组件**。
 - 不存在的路径报 `open: <path>: No such file or directory` 且退出 1（不弹窗）。
 
 激活环境后可直接 `open .`；`winux open .` 或 `open.cmd .` 亦可。
+
+## 常用路径提醒（自定义命令）
+
+Windows 的系统路径不好记（`hosts` 最典型）。所以 `winux <关键词>` 在**命令位置**
+直接给出提醒，而不是报 unknown command：
+
+```text
+C:\> winux hosts
+hosts → C:\Windows\System32\drivers\etc\hosts
+  本机主机名映射（DNS 覆盖），改完立即生效，无需重启
+  状态: 文件，1.4K，修改于 2026-10-12 13:19
+  权限: 编辑需要管理员权限（用 winux sudo）
+  接着做:
+    winux cat "C:\Windows\System32\drivers\etc\hosts"
+    winux open "C:\Windows\System32\drivers\etc\hosts"
+    winux sudo vi "C:\Windows\System32\drivers\etc\hosts"
+    winux open "C:\Windows\System32\drivers\etc"   (打开所在目录)
+  更多: winux paths 列出全部关键词；winux paths -q hosts 只输出路径
+```
+
+规则（这是重点，避免任何"魔法替换"）：
+
+- **只有命令位置**触发：`winux hosts` 提醒。关键词作为别的命令的参数时**完全不
+  干预**——`winux cat hosts` 仍然是当前目录下那个叫 `hosts` 的文件，找不到就照常
+  报错；`winux echo hosts` 还是原样输出 `hosts`。
+- 与真实命令同名时**真实命令优先**（例如 `ssh`/`ss`/`hostname` 是 winux 命令，
+  就不会被关键词表接管）；关键词表里也特意避开了这些名字。
+- 近似词只给提示、不改行为：`winux host` 仍然报 unknown command 并退出 1，但会
+  多打一行「你是不是想找 hosts → …」。
+- 退出码：命中关键词 = 0；未命中 = 仍然报错（同原来）。
+- 关闭提醒：`set WINUX_PATH_HINTS=off`（cmd）/ `$env:WINUX_PATH_HINTS='off'`
+  （PowerShell）。
+
+`paths` 子命令用于查表和脚本：
+
+```bat
+winux paths                      :: 列出全部关键词（37 个，含说明与 [需管理员] 标记）
+winux paths hosts                :: 与 winux hosts 相同的提醒
+winux paths -q hosts             :: 只输出路径，适合放进脚本
+winux paths -e -q                :: 只列本机真实存在的路径
+winux paths -s ssh               :: 按关键词/路径/说明模糊搜索
+winux paths --json               :: JSON（keyword/aliases/path/kind/description/admin/exists/source）
+```
+
+**自定义自己的路径**：编辑 `%USERPROFILE%\.winux\paths.tsv`（制表符分隔，
+`#`/`;` 开头为注释；文件不存在就跳过）：
+
+```tsv
+# 关键词[|别名]	路径	file|dir	说明	[admin]
+myapp	D:\apps\my.conf	file	我的应用配置
+myhosts|hosts	D:\alt\hosts	file	我自己的 hosts	admin
+```
+
+- 用户表条目**优先于内置表**（同名关键词会覆盖，如上例把 `hosts` 指到 `D:\alt\hosts`）；
+- 路径支持 `%VAR%` 占位符与前导 `~`；占位符在本机取不到值时该条目不参与（不会
+  打印半截路径）；
+- 多行写错只跳过坏行并在 stderr 提示行号，不影响其它条目；
+- `WINUX_PATHS_FILE=<路径>` 可整体替换用户表文件的位置（测试与便携部署用）。
 
 ## 构建与测试
 

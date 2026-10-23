@@ -17,11 +17,16 @@ import (
 // Execute runs a registered command in-process with stdout, stderr and stdin
 // redirected to captures. It returns the command's exit code plus the captured
 // stdout and stderr. An unknown command yields exit code 127, mirroring a
-// shell's "command not found".
+// shell's "command not found" — unless it is a well-known path keyword, which
+// prints the reminder and succeeds, exactly like the real dispatch in Main.
 func Execute(name string, args []string, stdin io.Reader) (int, string, string) {
 	c, ok := cmdTable[name]
 	if !ok {
-		return 127, "", fmt.Sprintf("winux: unknown command '%s'\n", name)
+		if text, matched := pathHint(name, args); matched {
+			return 0, text, ""
+		}
+		suggestion := pathSuggestion(name)
+		return 127, "", fmt.Sprintf("winux: unknown command '%s'\n%s", name, suggestion)
 	}
 	oldOut, oldErr, oldIn := os.Stdout, os.Stderr, os.Stdin
 	defer func() { os.Stdout, os.Stderr, os.Stdin = oldOut, oldErr, oldIn }()

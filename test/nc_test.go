@@ -33,6 +33,21 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+// freeUDPPort returns a port that UDP can actually bind right now. Asking the
+// OS for a TCP port is not enough: Windows reserves large blocks of the
+// ephemeral range for Hyper-V/WSL (netsh int ipv4 show excludedportrange
+// protocol=udp), so a TCP-free port can be unbindable for UDP with WSAEACCES.
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("free udp port: %v", err)
+	}
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	pc.Close()
+	return port
+}
+
 func TestNcHelpAndAlias(t *testing.T) {
 	for _, name := range []string{"nc", "netcat"} {
 		code, out, errOut := core.Execute(name, []string{"--help"}, strings.NewReader(""))
@@ -203,7 +218,7 @@ func TestNcUdpSend(t *testing.T) {
 }
 
 func TestNcUdpListen(t *testing.T) {
-	port := freePort(t)
+	port := freeUDPPort(t)
 	type result struct {
 		code        int
 		out, errOut string

@@ -3,6 +3,43 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-10-23 · 新增「常用路径提醒」：关键词当命令用，直接给出系统路径**：
+  - 起因：Windows 常用路径（`hosts`、`startup`、`tasks`、`eventlogs`…）不好记，
+    希望输入关键词就提醒，但**只在命令位置**生效——关键词作为别的命令的参数时
+    不做任何干预（`winux cat hosts` 仍是当前目录下的 hosts 文件）。
+  - 新文件 `core/paths.go`：36 条内置关键词表（hosts/services/protocols/networks/
+    lmhosts/etc、winini/systemini、windows/system32/syswow64/drivers/fonts/tasks/
+    eventlogs、userprofile/home/appdata/localappdata/programdata/programfiles/
+    programfiles86/temp/tmp/desktop/downloads/documents/inetpub、startup/
+    commonstartup、wslconfig/gitconfig/sshdir/sshconfig/authorizedkeys/kubeconfig/
+    dockerconfig/psprofile/ps7profile），每条含路径、类型、中文说明、是否需管理员。
+  - 提醒内容：`关键词 → 展开后的路径` + 说明 + 实际状态（文件/目录、大小、修改时间，
+    或"不存在"）+ 权限提示 + 「接着做」命令（`winux cat/open/sudo vi`，目录给
+    `ls`/`open`，文件额外给"打开所在目录"）+ 更多指引。路径里的 `%VAR%` 与前导
+    `~` 在查询时展开；占位符取不到值的条目直接不参与（不会打印半截路径）。
+  - 分发接入点两处共用同一逻辑：`core/main.go`（真实进程，打印后 exit 0）与
+    `core/export.go` 的 `Execute`（测试/嵌入用，返回 0 + 文本）。另加了
+    `winux help <关键词>` 也走提醒。
+  - **只认命令位置**：`Main`/`Execute` 的未知命令分支才查表，所以关键词作为参数
+    完全不受影响；与真实命令同名时真实命令优先。近似词（如 `host`）额外打印一行
+    「你是不是想找 hosts → …」，但**仍保持 unknown command 与退出码 1**（精确命中
+    才 exit 0）。
+  - 新命令 `paths`：`-q/--quiet`（只输出路径）、`--json`、`-e/--existing`、
+    `-s/--search TEXT`；无参数列出全部（含 `[需管理员]`/`[用户]` 标记与条目数）。
+    `winux paths hosts` 与 `winux hosts` 输出同一份提醒。
+  - **用户自定义表** `%USERPROFILE%\.winux\paths.tsv`（`WINUX_PATHS_FILE` 可覆盖）：
+    TSV，`关键词[|别名]	路径	file|dir	说明	[admin]`，
+    `#`/`;` 注释；用户条目优先于内置表（可覆盖同名关键词）；坏行只跳过并提示行号。
+    解析结果按「路径+大小+mtime」缓存，单条命令不会反复重读、重复告警。
+  - `WINUX_PATH_HINTS=off` 整体关闭提醒（含近似词建议）。
+  - 测试：`core/paths_test.go` 覆盖表结构自检、`%VAR%`/`~` 展开（含
+    `%ProgramFiles(x86)%` 括号名）、大小写与别名查表、提醒渲染、关闭开关、
+    **关键词作为参数不受影响**（`Execute("echo",["hosts"])`/`cat hosts`）、近似词
+    建议与退出码、用户表扩展与覆盖、`paths` 的 `-q`/`--json`/`-s`/未知关键词。
+    测试统一用空的 `WINUX_PATHS_FILE` 隔离，不受运行机器真实用户表影响。
+  - smoke 新增 7 项（hosts 提醒、不再 unknown command、`echo hosts` 原样、
+    `paths -q` 只输出路径、`--json` 可解析、`-s ssh`、近似词仍失败）。
+
 - **2026-09-14 · 宿主模式支持按单元配置（`[Service] HostMode=`）**：
   - `HostMode=link|copy` 写进 `.service` 的 `[Service]` 段即可只对**这一个**
     服务生效；优先级 **单元 `HostMode=` > `SYSTEMCTL_HOST_MODE` > `link`**。

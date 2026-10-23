@@ -64,6 +64,11 @@ func Main() {
 			if c, ok := cmdTable[args[1]]; ok {
 				os.Exit(c.run([]string{"--help"}))
 			}
+			// `winux help hosts` is a natural way to ask for a path reminder
+			if text, matched := pathHint(args[1], args[2:]); matched {
+				fmt.Print(text)
+				os.Exit(0)
+			}
 			fmt.Fprintf(os.Stderr, "%s: unknown command '%s'\n", progName, args[1])
 			os.Exit(1)
 		}
@@ -81,7 +86,17 @@ func Main() {
 
 	c, ok := cmdTable[args[0]]
 	if !ok {
+		// A well-known path keyword in command position is a request for the
+		// reminder, not a typo: `winux hosts` prints where hosts lives. As an
+		// argument of a real command it is left alone (`winux cat hosts`).
+		if text, matched := pathHint(args[0], args[1:]); matched {
+			fmt.Print(text)
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "%s: unknown command '%s'\n", progName, args[0])
+		if s := pathSuggestion(args[0]); s != "" {
+			fmt.Fprint(os.Stderr, s)
+		}
 		fmt.Fprintf(os.Stderr, "Try '%s --help' for the command list.\n", progName)
 		os.Exit(1)
 	}
@@ -118,6 +133,7 @@ func printGlobalHelp() {
 	fmt.Println("Examples:")
 	fmt.Println(`  cp -r src\pkg dst\pkg          rm -rf build\          touch -d "2024-01-02 10:00" a.txt`)
 	fmt.Println(`  grep -rin todo --include=*.go .     tail -f -n 50 app.log     less README.md     vi main.go`)
+	fmt.Println(`  winux hosts                    well-known path reminder (hosts, temp, startup, ...)`)
 	fmt.Println()
 	fmt.Printf("Run '%s <command> --help' for the options of a single command.\n", progName)
 }

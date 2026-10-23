@@ -184,7 +184,10 @@ func TestLsLong(t *testing.T) {
 		t.Errorf("ls -l -n should print numeric uid/gid 1000 1000:\n%s", joined)
 	}
 	joined = strings.Join(lsLines(t, "-l", "--time-style=long-iso"), "\n")
-	if !strings.Contains(joined, "-09-") && !strings.Contains(joined, "-0") {
+	// long-iso prints "YYYY-MM-DD HH:MM"; compare against today's date instead
+	// of a month literal (the old check required a leading zero in the month,
+	// so it failed from October on)
+	if !strings.Contains(joined, time.Now().Format("2006-01-02")) {
 		t.Errorf("long-iso style should print a YYYY-MM-DD date:\n%s", joined)
 	}
 	// -o hides the group, -g hides the owner

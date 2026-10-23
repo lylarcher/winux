@@ -235,6 +235,33 @@ try {
     Check 'sudo explains the Windows elevation model' ((Text (& $winux sudo --help)) -match 'UAC|administrator')
     Check 'su explains that Windows has no root account' ((Text (& $winux su --help)) -match 'USER|USER')
 
+    # ------------------------------------- well-known path reminders ------
+    # keep the keyword table deterministic and independent of the operator's
+    # own %USERPROFILE%\.winux\paths.tsv
+    $emptyPaths = Join-Path $work 'empty-paths.tsv'
+    Set-Content -Path $emptyPaths -Value '# no user entries' -Encoding ascii
+    $env:WINUX_PATHS_FILE = $emptyPaths
+
+    $hostsHint = Text (& $winux hosts)
+    $hostsCode = $LASTEXITCODE
+    Check 'winux hosts prints the hosts path reminder' `
+        (($hostsCode -eq 0) -and ($hostsHint -match 'drivers\\etc\\hosts')) "exit=$hostsCode"
+    Check 'winux hosts no longer reports an unknown command' (-not ($hostsHint -match 'unknown command')) $hostsHint
+    Check 'a keyword after a real command is left alone' ((Text (& $winux echo hosts)) -eq 'hosts')
+    $hostsPath = Text (& $winux paths -q hosts)
+    Check 'paths -q prints only the path' `
+        ($hostsPath -eq (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts')) $hostsPath
+    $pathsJson = $null
+    try { $pathsJson = ((& $winux paths --json) | Out-String) | ConvertFrom-Json } catch { }
+    Check 'paths --json parses and contains the hosts entry' `
+        (($null -ne $pathsJson) -and (($pathsJson | Where-Object { $_.keyword -eq 'hosts' }) -ne $null))
+    Check 'paths -s ssh finds the ssh directory' ((Text (& $winux paths -s ssh -q)) -match '\.ssh')
+    $nearMiss = (& cmd /c "`"${winux}`" host 2>&1" | Out-String)
+    $nearCode = $LASTEXITCODE
+    Check 'a near-miss keyword suggests the entry but still fails' `
+        (($nearCode -eq 1) -and ($nearMiss -match 'hosts') -and ($nearMiss -match 'unknown command')) (Text $nearMiss)
+    Remove-Item Env:WINUX_PATHS_FILE
+
     # -------------------------------------- mysql / redis-cli / tcpdump ----
     $code = Invoke-CmdLine "`"${winux}`" mysql -h 127.0.0.1 -P 1 -u nobody -e 'SELECT 1' >nul 2>&1"
     Check 'mysql reports connection failure without a server' ($code -eq 1) "exit=$code"
