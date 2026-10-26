@@ -20,6 +20,15 @@
     `sysImageNeedsRepair`、`sysRepairServiceImage`、`sysStartService`。
   - 顺带把注册命令行的拼装抽成 `sysServiceImage`，安装与修复共用一份逻辑，
     不会再出现「修好之后和安装写的不一样」。
+  - **追加（实测踩到）：被 shell 转义污染的注册**。`sc.exe create x binPath= "\"...\""`
+    这类 PowerShell 写法会把反斜杠当数据存进去，SCM 拿到的命令行是
+    `\"C:\...\revtunnel-agent.exe\" svchost -unit \"...\"` —— 映像解析不出来，
+    `StartService` 报的就是 `Access is denied.`（文件本身完全正常）。现在
+    `sysImagePathOf` 认识这种写法（消息里仍能点出本该是哪个文件），
+    `sysImageFact` 直接标注「命令行里带着 `\"` 转义」，且 `sysImageRunnable`
+    认为它不可运行 → 自愈会按单元文件重写成干净的命令行。测试：
+    `TestImageFactCallsOutEscapedQuoting` + 命令行拆解里两条转义样例 +
+    修复判定里的「转义注册」情形。
   - 测试：`SystemctlStart*`（`core/systemctl_start_test.go`）覆盖命令行拆解
     （带引号/空格/参数/空串）、三种坏映像的事实描述、修复判定的四种情形
     （目录、丢失、空串、0 字节 vs 正常注册）、5 个 Win32 码的提示、以及失败消息

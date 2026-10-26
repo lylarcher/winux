@@ -25,11 +25,40 @@ func TestImagePathOfStripsTheArguments(t *testing.T) {
 		{`C:\Windows\System32\ping.exe`, `C:\Windows\System32\ping.exe`},
 		{``, ``},
 		{`  "C:\a.exe"  `, `C:\a.exe`},
+		// PowerShell escaping handed to sc.exe as data: the whole registration
+		// is unusable, but the message still has to name the intended file
+		{`\"C:\ProgramData\systemctl\hosts\demo.exe\" svchost -unit \"C:\x\demo.service\"`, `C:\ProgramData\systemctl\hosts\demo.exe`},
+		{`\"C:\a b\demo.exe\" -run`, `C:\a b\demo.exe`},
 	}
 	for _, c := range cases {
 		if got := sysImagePathOf(c.in); got != c.want {
 			t.Errorf("sysImagePathOf(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// The escaping is the defect, not the file: the message must say so instead of
+// reporting a perfectly present image as missing.
+func TestImageFactCallsOutEscapedQuoting(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "demo.exe")
+	if err := os.WriteFile(exe, []byte("m"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	escaped := `\"` + exe + `\" svchost -unit \"C:\x\demo.service\"`
+	if !sysImageIsEscaped(escaped) {
+		t.Fatal("this command line is meant to be the escaped form")
+	}
+	got := sysImageFact(escaped)
+	if !strings.Contains(got, "转义") {
+		t.Errorf("an escaped registration must be called out as such: got %q", got)
+	}
+	if !strings.Contains(got, exe) {
+		t.Errorf("the message should still name the intended file: got %q", got)
+	}
+	// and a clean command line is never reported as escaped
+	if sysImageIsEscaped(`"` + exe + `" svchost -unit x`) {
+		t.Error("a clean registration must not be flagged as escaped")
 	}
 }
 
@@ -79,6 +108,7 @@ func TestImageNeedsRepairOnlyWhenTheImageCannotRun(t *testing.T) {
 		{"a removed host is repaired", `"` + filepath.Join(dir, "gone.exe") + `"`, true},
 		{"an empty registration is repaired", "", true},
 		{"a 0-byte image is repaired", `"` + filepath.Join(dir, "empty.exe") + `"`, true},
+		{"an escaped registration is repaired", `\"` + exe + `\" svchost -unit x`, true},
 		{"a working registration is left alone", expected, false},
 	}
 	// the leftover of an interrupted copy: it exists, it is a file, and it can
@@ -139,10 +169,10 @@ func TestStartFailureMessageCarriesTheFacts(t *testing.T) {
 	msg := sysStartFailureText("demo", cfg, syscall.Errno(5), `映像 "C:\old\demo.exe" → "C:\new\demo.exe"`)
 
 	for _, want := range []string{
-		"Access is denied.",  // the raw Win32 text stays first
-		"服务映像: " + dir,     // and the file it is really about
-		"是目录",                // with the reason, not just the code
-		"已修正服务注册",            // what the repair did, if it ran
+		"Access is denied.", // the raw Win32 text stays first
+		"服务映像: " + dir,      // and the file it is really about
+		"是目录",               // with the reason, not just the code
+		"已修正服务注册",           // what the repair did, if it ran
 		"权限: ",              // elevation, because 5 means different things
 		"提示: ",              // and the next step
 	} {

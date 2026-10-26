@@ -661,10 +661,27 @@ func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
 // execution, so the code alone cannot tell those apart: the facts can.
 
 // sysImagePathOf strips the arguments from an SCM command line.
+//
+// It also understands a command line polluted by PowerShell-style escaping:
+// `sc.exe create x binPath= "\"C:\a b\x.exe\" -foo"` stores the backslashes
+// verbatim, so the SCM ends up with `\"C:\a b\x.exe\"` where it expects
+// `"C:\a b\x.exe"`. Such a service cannot start (ERROR_ACCESS_DENIED), and a
+// reader that merely strips arguments would report the file as missing instead
+// of the quoting as broken.
 func sysImagePathOf(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""
+	}
+	if strings.HasPrefix(cmd, `\"`) { // the escaped opening quote
+		body := cmd[2:]
+		if i := strings.Index(body, `\"`); i >= 0 {
+			return body[:i]
+		}
+		if i := strings.IndexByte(body, ' '); i > 0 {
+			return body[:i]
+		}
+		return body
 	}
 	if cmd[0] == '"' {
 		if i := strings.IndexByte(cmd[1:], '"'); i >= 0 {
@@ -678,6 +695,12 @@ func sysImagePathOf(cmd string) string {
 	return cmd
 }
 
+// sysImageIsEscaped reports whether a registered command line still carries the
+// `\"` escaping — i.e. the backslashes were handed to the SCM as data.
+func sysImageIsEscaped(cmd string) bool {
+	return strings.Contains(strings.TrimSpace(cmd), `\"`)
+}
+
 // sysImageFact describes a registered image so a failure message can show what
 // the SCM is actually pointing at.
 func sysImageFact(cmd string) string {
@@ -686,6 +709,11 @@ func sysImageFact(cmd string) string {
 		return "（注册的命令行为空）"
 	}
 	fi, err := os.Stat(p)
+	if sysImageIsEscaped(cmd) {
+		// the file itself may be perfectly fine: what is broken is the quoting
+		// the SCM was handed, and that alone stops the service from starting
+		return fmt.Sprintf("%s（命令行里带着 \\\" 转义：SCM 解析不出有效映像，重新注册即可）", p)
+	}
 	switch {
 	case err != nil:
 		return p + "（不存在）"
@@ -728,8 +756,12 @@ func sysStartHint(err error) string {
 // sysImageRunnable reports whether a path can possibly be started as an image:
 // a regular file with contents. A directory and a 0-byte file are the two shapes
 // an interrupted materialization leaves behind, and both fail the same way as a
-// missing file.
+// missing file. A command line that still carries `\"` escaping is unrunnable no
+// matter what the file looks like — the SCM was handed the backslashes as data.
 func sysImageRunnable(cmd string) bool {
+	if sysImageIsEscaped(cmd) {
+		return false
+	}
 	path := sysImagePathOf(cmd)
 	if path == "" {
 		return false
