@@ -3,6 +3,29 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-10-26 · `systemctl start` 失败时给事实、能自愈的注册自动修好**：
+  - 现象：`systemctl start revtunnel-agent` 只回一句
+    `systemctl: revtunnel-agent start failed: Access is denied.` —— 没有操作、
+    没有文件、没有码；而 `ERROR_ACCESS_DENIED`(5) 恰恰是「注册的服务映像不可
+    执行」的典型表现，光看这句话只能乱猜。
+  - 修法一（说话）：失败时补上**服务映像**（路径 + 不存在 / 是目录 / 0 字节）、
+    **单元期望的映像**、**是否管理员**，以及按 Win32 码给的下一步
+    （5 / 1053 / 1058 / 1060 / 1072）。原始错误文本保留在第一行，方便检索与
+    脚本匹配。新增 `sysImagePathOf`、`sysImageFact`、`sysStartHint`、
+    `sysStartFailureText`（纯函数，可单测）。
+  - 修法二（自愈）：`StartService` 失败且注册的映像**可证明跑不起来**
+    （路径是目录 / 文件不存在 / 0 字节——中断的复制会留下空文件）而单元期望的
+    映像可用时，按单元文件重写注册并**重试一次**，成功则打印「已修正服务注册」。
+    可用的注册一律不动，不覆盖人为修改。新增 `sysImageRunnable`、
+    `sysImageNeedsRepair`、`sysRepairServiceImage`、`sysStartService`。
+  - 顺带把注册命令行的拼装抽成 `sysServiceImage`，安装与修复共用一份逻辑，
+    不会再出现「修好之后和安装写的不一样」。
+  - 测试：`SystemctlStart*`（`core/systemctl_start_test.go`）覆盖命令行拆解
+    （带引号/空格/参数/空串）、三种坏映像的事实描述、修复判定的四种情形
+    （目录、丢失、空串、0 字节 vs 正常注册）、5 个 Win32 码的提示、以及失败消息
+    的组成（原始错误 + 映像 + 权限 + 提示，缺少配置时优雅降级）。变异验证：
+    把 0 字节算作可运行 → 修复判定测试失败。
+
 - **2026-10-26 · 修复 `systemctl start` 在已激活的 cmd 会话里必失败**：
   - 现象：`(winux)` 前缀的 cmd 窗口里执行 `systemctl start revtunnel-agent` 报
     `cannot create the service host ...\hosts\revtunnel-agent.exe:

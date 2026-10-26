@@ -565,29 +565,36 @@ func sysTargetBackend(u *sysUnit) string {
 	return "wrapped" // winux.exe always embeds the svchost host
 }
 
-func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
-	name := u.Name
-	var bin string
+// sysServiceImage returns the SCM command line of a unit's service backend. Both
+// registration and repair go through it so a repaired service is registered with
+// exactly what an install would have written.
+func sysServiceImage(u *sysUnit, backend string) (string, error) {
 	if backend == "wrapped" {
 		// The service must not depend on the winux installation: each unit gets
 		// its own self-contained copy of the host under ProgramData (see
 		// sysMaterializeHost), and SCM is pointed at that file. The unit's own
 		// HostMode= decides how it lands on disk (link or copy).
-		host, err := sysMaterializeHostMode(name, u.HostMode)
+		host, err := sysMaterializeHostMode(u.Name, u.HostMode)
 		if err != nil {
 			return "", err
 		}
-		bin = fmt.Sprintf(`"%s" svchost -unit "%s"`, host, u.Path)
-	} else {
-		exe, args := sysSplitExecStart(u.ExecStart)
-		if strings.ContainsAny(exe, " ") {
-			exe = `"` + exe + `"`
-		}
-		if args != "" {
-			bin = exe + " " + args
-		} else {
-			bin = exe
-		}
+		return fmt.Sprintf(`"%s" svchost -unit "%s"`, host, u.Path), nil
+	}
+	exe, args := sysSplitExecStart(u.ExecStart)
+	if strings.ContainsAny(exe, " ") {
+		exe = `"` + exe + `"`
+	}
+	if args != "" {
+		return exe + " " + args, nil
+	}
+	return exe, nil
+}
+
+func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
+	name := u.Name
+	bin, err := sysServiceImage(u, backend)
+	if err != nil {
+		return "", err
 	}
 	desc := u.Description
 	if desc == "" {
@@ -641,6 +648,184 @@ func sysInstallServiceBackend(u *sysUnit, backend string) (string, error) {
 		return "", err
 	}
 	return "updated", nil
+}
+
+// ---------------------------------------------------------------------------
+// Start diagnostics and self-repair
+//
+// `systemctl start` used to report the SCM's bare error, e.g. "start failed:
+// Access is denied." — which names neither the operation nor the file, and that
+// is the message a broken registration produces (an image path pointing at a
+// directory, a host that was removed, a name left over from an older install).
+// Windows answers ERROR_ACCESS_DENIED when the image cannot be opened for
+// execution, so the code alone cannot tell those apart: the facts can.
+
+// sysImagePathOf strips the arguments from an SCM command line.
+func sysImagePathOf(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return ""
+	}
+	if cmd[0] == '"' {
+		if i := strings.IndexByte(cmd[1:], '"'); i >= 0 {
+			return cmd[1 : 1+i]
+		}
+		return strings.TrimSpace(cmd[1:])
+	}
+	if i := strings.IndexByte(cmd, ' '); i > 0 {
+		return cmd[:i]
+	}
+	return cmd
+}
+
+// sysImageFact describes a registered image so a failure message can show what
+// the SCM is actually pointing at.
+func sysImageFact(cmd string) string {
+	p := sysImagePathOf(cmd)
+	if p == "" {
+		return "（注册的命令行为空）"
+	}
+	fi, err := os.Stat(p)
+	switch {
+	case err != nil:
+		return p + "（不存在）"
+	case fi.IsDir():
+		return p + "（是目录，不是可执行文件）"
+	case fi.Size() == 0:
+		return p + "（0 字节：空文件，无法执行）"
+	default:
+		return fmt.Sprintf("%s（%d 字节）", p, fi.Size())
+	}
+}
+
+// sysStartHint renders the actionable part of a start failure: Windows reuses
+// ERROR_ACCESS_DENIED for several unrelated causes, so a code-only message sends
+// people looking in the wrong place.
+func sysStartHint(err error) string {
+	var e syscall.Errno
+	if !errors.As(err, &e) {
+		return ""
+	}
+	switch uint32(e) {
+	case 5: // ERROR_ACCESS_DENIED
+		return "SCM 拒绝了这次启动。常见三种原因：① 注册的映像不可执行——路径是目录、" +
+			"文件已被删除，或 ACL 不允读取（看上面的『服务映像』）；② 服务的安全描述符不" +
+			"允许当前账号启动它；③ 服务账户的密码/权限已失效。可用 `winux systemctl " +
+			"enable <unit>` 按单元文件重写注册后重试，或 `sc.exe qc <unit>` 对照 BINARY_PATH_NAME。"
+	case 1053: // ERROR_SERVICE_REQUEST_TIMEOUT
+		return "程序 30 秒内没有回应 SCM。控制台程序必须用 Type=simple（由 winux 的 svchost " +
+			"宿主承载）；Type=native 只有程序自己实现了服务协议才行。"
+	case 1058:
+		return "服务被禁用。`winux systemctl enable <unit>` 后再启动。"
+	case 1060:
+		return "服务不存在（可能已被删除）。`winux systemctl daemon-reload` 重新安装一次。"
+	case 1072:
+		return "服务被标记为删除。重启一次，或 `sc.exe delete <unit>` 后重新安装。"
+	}
+	return ""
+}
+
+// sysImageRunnable reports whether a path can possibly be started as an image:
+// a regular file with contents. A directory and a 0-byte file are the two shapes
+// an interrupted materialization leaves behind, and both fail the same way as a
+// missing file.
+func sysImageRunnable(cmd string) bool {
+	path := sysImagePathOf(cmd)
+	if path == "" {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir() && fi.Size() > 0
+}
+
+// sysImageNeedsRepair reports whether the registered command line cannot possibly
+// run while the expected one can. Only that provable case is repaired: a working
+// registration is never rewritten, so a deliberate edit is respected.
+func sysImageNeedsRepair(current, expected string) bool {
+	if expected == "" || sysImageRunnable(current) {
+		return false
+	}
+	return sysImageRunnable(expected)
+}
+
+// sysRepairServiceImage rewrites a registration whose image cannot run and
+// returns a short description of what changed.
+func sysRepairServiceImage(name string, s *mgr.Service) (string, bool) {
+	u, _, _, err := sysResolveTarget(name)
+	if err != nil || u == nil {
+		return "", false
+	}
+	want, err := sysServiceImage(u, sysTargetBackend(u))
+	if err != nil {
+		return "", false
+	}
+	cfg, err := s.Config()
+	if err != nil {
+		return "", false
+	}
+	if !sysImageNeedsRepair(cfg.BinaryPathName, want) {
+		return "", false
+	}
+	was := cfg.BinaryPathName
+	cfg.BinaryPathName = want
+	if err := s.UpdateConfig(cfg); err != nil {
+		warn("systemctl", "%s: cannot rewrite the service registration: %v", name, err)
+		return "", false
+	}
+	return fmt.Sprintf("映像 %s → %s", sysImagePathOf(was), sysImagePathOf(want)), true
+}
+
+// sysStartFailure turns the SCM's error into something that can be acted on: the
+// code, the registered image, what the unit expects, and the elevation state.
+func sysStartFailure(name string, s *mgr.Service, cause error, repaired string) error {
+	var cfgp *mgr.Config
+	if cfg, err := s.Config(); err == nil {
+		cfgp = &cfg
+	}
+	return errors.New(sysStartFailureText(name, cfgp, cause, repaired))
+}
+
+// sysStartFailureText builds the message sysStartFailure returns. Split out so
+// the wording (which is the whole point of it) is testable without an SCM.
+func sysStartFailureText(name string, cfg *mgr.Config, cause error, repaired string) string {
+	var b strings.Builder
+	b.WriteString(cause.Error())
+	if repaired != "" {
+		fmt.Fprintf(&b, "\n   已修正服务注册（%s），重试后仍然失败", repaired)
+	}
+	if cfg != nil {
+		fmt.Fprintf(&b, "\n   服务映像: %s", sysImageFact(cfg.BinaryPathName))
+	}
+	if u, _, _, err := sysResolveTarget(name); err == nil && u != nil {
+		if want, werr := sysServiceImage(u, sysTargetBackend(u)); werr == nil {
+			fmt.Fprintf(&b, "\n   单元期望: %s", want)
+		}
+	}
+	if isAdmin() {
+		b.WriteString("\n   权限: 管理员（已具备启停服务的权限）")
+	} else {
+		b.WriteString("\n   权限: 非管理员 —— start 需要提权")
+	}
+	if hint := sysStartHint(cause); hint != "" {
+		fmt.Fprintf(&b, "\n   提示: %s", hint)
+	}
+	return b.String()
+}
+
+// sysStartService starts an already-registered service, repairing a registration
+// that provably cannot run before giving up.
+func sysStartService(name string, s *mgr.Service) (repaired string, err error) {
+	if err = s.Start(); err == nil {
+		return "", nil
+	}
+	rep, ok := sysRepairServiceImage(name, s)
+	if !ok {
+		return "", err
+	}
+	if e2 := s.Start(); e2 != nil {
+		return rep, e2
+	}
+	return rep, nil
 }
 
 func sysResolveAccount(user string) string {
@@ -1433,18 +1618,24 @@ func sysStartUnit(rt *sysRuntime, name string) error {
 		// the duration of the start and put it back afterwards — the unit
 		// stays disabled across reboots, exactly like systemd.
 		restore := sysForceDemandStart(s)
-		err = s.Start()
+		repaired, err := sysStartService(name, s)
 		if err != nil && restore == 0 && errors.Is(err, errSvcDisabled) {
 			restore = sysForceDemandStart(s)
 			if restore != 0 {
-				err = s.Start()
+				repaired, err = sysStartService(name, s)
 			}
 		}
 		if err == nil {
 			err = sysWaitServiceRunning(name, sysStartTimeout)
 		}
 		sysRestoreStartType(s, restore)
-		return err
+		if repaired != "" && err == nil {
+			warn("systemctl", "%s: 已修正服务注册（%s），服务已启动", name, repaired)
+		}
+		if err != nil {
+			return sysStartFailure(name, s, err, repaired)
+		}
+		return nil
 	case "task", "login":
 		return sysStartStopTask(name, rt.Kind == "login", true)
 	}
