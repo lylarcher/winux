@@ -3,6 +3,33 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-10-26 · 修复 `systemctl start` 在已激活的 cmd 会话里必失败**：
+  - 现象：`(winux)` 前缀的 cmd 窗口里执行 `systemctl start revtunnel-agent` 报
+    `cannot create the service host ...\hosts\revtunnel-agent.exe:
+    read D:\my-tools\winux: Incorrect function.` —— 源路径是**安装目录**而不是
+    `winux.exe`；对目录句柄做读取，Windows 回的就是 `ERROR_INVALID_FUNCTION`。
+  - 根因：**同一个环境变量名承担了两种含义**。`winux-activate.cmd` 把 `WINUX_EXE`
+    设成**安装目录**（同一个值还要拼进 PATH），而 `core/systemctl_host.go` 与
+    `core/sshd.go` 把 `WINUX_EXE` 当成**可执行文件**去复制宿主、派生子进程。
+    不激活没事，一激活就必炸——而激活正是日常用法。
+  - 修法两层：
+    1. **脚本正名**：`WINUX_HOME` = 安装目录（进 PATH），`WINUX_EXE` =
+       `<WINUX_HOME>\winux.exe`（可执行文件）。`winux-deactivate.cmd` 两个都清，
+       且 PATH 兜底清理会剥掉 `WINUX_HOME`（老窗口里那本是 `WINUX_EXE`，一并剥）。
+    2. **读取端容错**：新增 `core/winuxbin.go` 的 `sysWinuxBinary()`——`WINUX_EXE`
+       指向目录时自动解析成其中的 `winux.exe`；解析不出来则原样返回、照旧报错
+       （不掩盖真正写错的变量）。`systemctl`（宿主物化）与 `sshd`（子进程可执行
+       文件）都改走它，**已经装好、还没重新解压垫片的老环境，只换 winux.exe 就能
+       立刻恢复，不必先改环境变量**。
+  - 测试：`TestWinuxExeFromResolvesBothSpellings`（文件 / 目录 / 缺 winux.exe 的目录 /
+    不存在路径四种拼写）、`TestWinuxBinaryHonoursTheOverride`、
+    `TestWinuxBinaryFallsBackToTheRunningExecutable`、
+    `TestMaterializeHostFromAnActivatedSession`（真实复现：`WINUX_EXE`=安装目录 +
+    `HostMode=copy` 必须物化成功且字节正确）、`TestActivateScriptSeparatesHomeFromExe`
+    （断言内嵌脚本不再把目录塞进 `WINUX_EXE`）。变异验证：去掉目录解析 → 报错与
+    线上那条**逐字相同**（`cannot create the service host ...: read <dir>: Incorrect
+    function.`）；脚本改回设目录 → 脚本断言失败。
+
 - **2026-10-23 · 新增「常用路径提醒」：关键词当命令用，直接给出系统路径**：
   - 起因：Windows 常用路径（`hosts`、`startup`、`tasks`、`eventlogs`…）不好记，
     希望输入关键词就提醒，但**只在命令位置**生效——关键词作为别的命令的参数时

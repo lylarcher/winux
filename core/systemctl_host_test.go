@@ -45,6 +45,32 @@ func TestHostDirDefaultsUnderProgramData(t *testing.T) {
 	}
 }
 
+// A service started from an activated cmd window: winux-activate.cmd used to put
+// the INSTALLATION DIRECTORY into WINUX_EXE, and materializing the host by copying
+// it failed with "read D:\...\winux: Incorrect function" (Windows answers
+// ERROR_INVALID_FUNCTION when a directory handle is read). The installed irregular
+// spelling is still out there in every activated shell, so it must work.
+func TestMaterializeHostFromAnActivatedSession(t *testing.T) {
+	hostDir := t.TempDir()
+	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)
+	t.Setenv("SYSTEMCTL_HOST_MODE", "") // the unit decides
+
+	install := t.TempDir() // the winux installation directory
+	src := filepath.Join(install, "winux.exe")
+	payload := []byte("winux-service-host-from-an-activated-session")
+	writeHostFixture(t, src, payload)
+	t.Setenv("WINUX_EXE", install) // exactly what winux-activate.cmd sets
+
+	dest, err := sysMaterializeHostMode("activated", "copy")
+	if err != nil {
+		t.Fatalf("systemctl start in an activated session must work: %v", err)
+	}
+	if want := filepath.Join(hostDir, "activated.exe"); !strings.EqualFold(dest, want) {
+		t.Fatalf("host path = %q, want %q", dest, want)
+	}
+	assertHostContent(t, dest, payload)
+}
+
 func TestMaterializeHostIsSelfContained(t *testing.T) {
 	hostDir := t.TempDir()
 	t.Setenv("SYSTEMCTL_HOST_DIR", hostDir)

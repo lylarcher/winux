@@ -568,14 +568,9 @@ func sshRunShell(ch ssh.Channel, sconn *ssh.ServerConn, st *sshSession, cols, ro
 }
 
 // sshChildExe returns the winux executable used for remote exec/shell child
-// processes; WINUX_EXE overrides it (used by tests).
+// processes; WINUX_EXE overrides it (used by tests). It goes through
+// sysWinuxBinary because an activated cmd session sets that variable to the
+// installation directory, and spawning a directory is not a thing.
 func sshChildExe() string {
-	if e := os.Getenv("WINUX_EXE"); e != "" {
-		return e
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "winux.exe"
-	}
-	return exe
+	return sysWinuxBinary()
 }

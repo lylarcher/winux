@@ -58,15 +58,12 @@ func sysHostPath(name string) string {
 // SYSTEMCTL_HOST_MODE, then the "link" default (pass "" for a unit with no
 // override). The source binary is the running winux.exe, or WINUX_EXE when set
 // (the same override the remote-exec children use, which is also how tests
-// point at a freshly built binary).
+// point at a freshly built binary); a WINUX_EXE naming the installation
+// directory is accepted too — see sysWinuxBinary.
 func sysMaterializeHostMode(name, unitMode string) (string, error) {
-	src := os.Getenv("WINUX_EXE")
+	src := sysWinuxBinary()
 	if src == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return "", fmt.Errorf("cannot locate the winux executable: %v", err)
-		}
-		src = exe
+		return "", fmt.Errorf("cannot locate the winux executable")
 	}
 	return sysMaterializeHostFrom(src, name, sysHostModeFor(unitMode))
 }

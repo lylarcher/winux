@@ -64,6 +64,15 @@ call .\bin\cmd\winux-deactivate.cmd # cmd.exe
 > conda/Python venv 等其它工具的激活脚本冲突。cmd.exe 激活会顺带安装
 > `mkdir/echo/date` 的 doskey 宏（见下文「cmd.exe 内建命令」一节）。
 
+> **激活后的两个环境变量**（这次修复起分开，之前是同一个名字，见 CHANGELOG）：
+> `WINUX_HOME` = 安装目录（进 PATH），`WINUX_EXE` = `<WINUX_HOME>\winux.exe`（可执行文件）。
+> 少数功能需要「winux.exe 这个文件」而不是目录——典型是 `systemctl start` 物化
+> 每个服务的宿主 exe、以及 sshd 派生子 shell。之前两者共用 `WINUX_EXE` 且被设成
+> 目录，于是**在激活窗口里 `systemctl start` 必失败**（报
+> `read <安装目录>: Incorrect function`）。现在脚本已经分开；读取端还会兼容
+> 老环境：`WINUX_EXE` 指向目录时自动取其中的 `winux.exe`，所以只换 winux.exe、
+> 不重新解压垫片也能直接用。
+
 ## 激活原理（venv 式会话机制）
 
 `activate` 的工作方式与 **Python venv 的激活**同模型：只对**当前终端会话**
