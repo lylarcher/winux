@@ -274,10 +274,21 @@ try {
     $hostsPath = Text (& $winux paths -q hosts)
     Check 'paths -q prints only the path' `
         ($hostsPath -eq (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts')) $hostsPath
+    # `paths --json` writes UTF-8; PowerShell 5.1 decodes native output with the
+    # console code page, so the Chinese descriptions would arrive as mojibake and
+    # ConvertFrom-Json would reject the very bytes winux produced. Parse it with
+    # the console switched to UTF-8 (restored right after), and always keep an
+    # encoding-independent textual check as well.
+    $pathsJsonRaw = ((& $winux paths --json) | Out-String)
+    Check 'paths --json contains the hosts entry' ($pathsJsonRaw -match '"keyword":\s*"hosts"') ''
     $pathsJson = $null
-    try { $pathsJson = ((& $winux paths --json) | Out-String) | ConvertFrom-Json } catch { }
-    Check 'paths --json parses and contains the hosts entry' `
-        (($null -ne $pathsJson) -and (($pathsJson | Where-Object { $_.keyword -eq 'hosts' }) -ne $null))
+    $savedEnc = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.Encoding]::UTF8
+        $pathsJson = (((& $winux paths --json) | Out-String)) | ConvertFrom-Json
+    } catch { } finally { [Console]::OutputEncoding = $savedEnc }
+    Check 'paths --json parses as JSON when read as UTF-8' `
+        (($null -ne $pathsJson) -and (($pathsJson | Where-Object { $_.keyword -eq 'hosts' }) -ne $null)) ''
     Check 'paths -s ssh finds the ssh directory' ((Text (& $winux paths -s ssh -q)) -match '\.ssh')
     $nearMiss = (& cmd /c "`"${winux}`" host 2>&1" | Out-String)
     $nearCode = $LASTEXITCODE
