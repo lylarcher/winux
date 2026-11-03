@@ -94,7 +94,10 @@ func TestActivateScriptSeparatesHomeFromExe(t *testing.T) {
 	if !strings.Contains(d, `set "WINUX_HOME="`) {
 		t.Error("winux-deactivate.cmd must clear WINUX_HOME")
 	}
-	if !strings.Contains(d, `"%%~p"=="%WINUX_HOME%"`) {
+	// the fallback strips the install dir (WINUX_HOME), not only WINUX_EXE; the
+	// entry is normalized into WINUX_E first because either side may carry a
+	// trailing backslash
+	if !strings.Contains(d, `"%WINUX_E%"=="%WINUX_HOME%"`) {
 		t.Error("the PATH fallback must strip the install dir (WINUX_HOME), not only WINUX_EXE")
 	}
 }

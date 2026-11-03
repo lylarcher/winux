@@ -36,9 +36,30 @@ var shimFS embed.FS
 // `shims` is the materializer itself.
 var shimExclusions = map[string]bool{"activate": true, "deactivate": true, "shims": true}
 
-// cmdShimTemplate is the per-command batch shim (LF endings, like cmd.exe
-// handles fine and keeps the md5 comparison stable across rebuilds).
+// cmdShimTemplate is the per-command batch shim. The sources stay LF in git;
+// crlf() converts them on the way to disk because a batch file MUST be CRLF.
 const cmdShimTemplate = "@echo off\nsetlocal\n\"%%~dp0..\\winux.exe\" %s %%*\nexit /b %%ERRORLEVEL%%\n"
+
+// crlf converts LF endings to CRLF; existing CRLF is left untouched.
+//
+// This is not cosmetic. cmd.exe tracks its position in a batch file by counting
+// line terminators; for an LF-only file that arithmetic drifts, and once a
+// multi-line ( ... ) block is involved the parser resumes a couple of bytes off
+// the line start, so fragments of the script are executed as commands. Running
+// an LF-only `winux-deactivate` printed "'m'", "'skey'", "'defined'", "'else'"
+// (that is "rem"/"doskey"/"if defined" minus two bytes) — the byte-level offset
+// is the give-away. The batch templates are also written flat (one statement
+// per line, no blocks) so a surprise like that cannot cascade.
+func crlf(b []byte) []byte {
+	out := make([]byte, 0, len(b)+len(b)/16)
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\n' && (i == 0 || b[i-1] != '\r') {
+			out = append(out, '\r')
+		}
+		out = append(out, b[i])
+	}
+	return out
+}
 
 func init() {
 	addCmd("shims", "recreate/refresh the cmd\\ shim files beside this winux.exe (activate does this automatically too)", cmdShims)
@@ -116,6 +137,13 @@ func planMaterialize() (map[string][]byte, map[string]bool, error) {
 		files[f.target] = b
 		if strings.HasPrefix(f.target, "cmd"+string(filepath.Separator)) {
 			expectedCmd[strings.TrimSuffix(filepath.Base(f.target), filepath.Ext(f.target))] = true
+		}
+	}
+	// batch files are written with CRLF (see crlf); .ps1 files are fine either
+	// way and stay exactly as embedded
+	for rel, content := range files {
+		if strings.EqualFold(filepath.Ext(rel), ".cmd") {
+			files[rel] = crlf(content)
 		}
 	}
 	return files, expectedCmd, nil

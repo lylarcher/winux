@@ -94,6 +94,29 @@ try {
     Check 'winux-activate resolves to a session function, not the batch shim' `
         ((Get-Command winux-activate -ErrorAction SilentlyContinue).CommandType -eq 'Function') (Get-Command winux-activate -ErrorAction SilentlyContinue).Source
 
+    # The batch helpers run inside a real cmd.exe: the batch parser must not
+    # lose sync (an LF-only file used to execute fragments such as 'm', 'skey',
+    # 'defined', 'else') and deactivate must restore PATH exactly.
+    $cmdProbe = Join-Path $work 'probe-activate.cmd'
+    Set-Content -Path $cmdProbe -Encoding ascii -Value @(
+        '@echo off',
+        "call `"$(Join-Path $bin 'winux-activate.cmd')`"",
+        'echo ACTIVE=[%WINUX_ACTIVE%]',
+        "call `"$(Join-Path $bin 'winux-deactivate.cmd')`"",
+        'echo AFTER=[%PATH%]',
+        'echo MARKER=[%WINUX_ACTIVE%]'
+    )
+    $probeOut = (& cmd /c "`"$cmdProbe`" 2>&1" | Out-String)
+    $probeCode = $LASTEXITCODE
+    Check 'cmd: activate then deactivate runs without parser fragments' `
+        (($probeCode -eq 0) -and ($probeOut -notmatch "not recognized|不是内部") -and
+         ($probeOut -notmatch "'m'|'skey'|'defined'")) (Text $probeOut)
+    Check 'cmd: deactivate clears WINUX_ACTIVE and restores a non-empty PATH' `
+        (($probeOut -match 'ACTIVE=\[1\]') -and ($probeOut -match 'MARKER=\[\]') -and
+         ($probeOut -match 'AFTER=\[\S')) (Text $probeOut)
+    Check 'cmd: the generated batch helpers are CRLF files' `
+        (([IO.File]::ReadAllText((Join-Path $bin 'winux-deactivate.cmd'))) -notmatch "(?<!`r)`n") ''
+
     # ---------------------------------------------------------- fixtures ----
     mkdir -p src/sub | Out-Null
     Set-Content -Path src/a.txt -Value 'alpha'      -NoNewline

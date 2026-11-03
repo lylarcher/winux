@@ -15,13 +15,15 @@ rem                host, and what sshd spawns)
 rem They used to share the name WINUX_EXE, with the directory winning, so
 rem `systemctl start` in an activated window tried to copy the directory and
 rem failed with "read D:\...\winux: Incorrect function".
-if exist "%~dp0..\winux.exe" (
-    set "WINUX_SHIMS=%~dp0"
-    for %%E in ("%~dp0..") do set "WINUX_HOME=%%~fE"
-) else (
-    set "WINUX_SHIMS=%~dp0cmd\"
-    for %%E in ("%~dp0.") do set "WINUX_HOME=%%~fE"
-)
+rem
+rem KEEP THIS FILE FLAT: no multi-line ( ... ) blocks (see winux-deactivate.cmd
+rem for why: cmd.exe mis-tracks offsets in LF-only files and then runs fragments
+rem of the script as commands).
+set "WINUX_SHIMS=%~dp0cmd\"
+set "WINUX_HOME=%~dp0."
+if exist "%~dp0..\winux.exe" set "WINUX_SHIMS=%~dp0"
+if exist "%~dp0..\winux.exe" set "WINUX_HOME=%~dp0.."
+for %%E in ("%WINUX_HOME%") do set "WINUX_HOME=%%~fE"
 set "WINUX_EXE=%WINUX_HOME%\winux.exe"
 if not defined WINUX_OLD_PATH set "WINUX_OLD_PATH=%PATH%"
 set "PATH=%WINUX_SHIMS%;%WINUX_HOME%;%PATH%"
@@ -30,9 +32,10 @@ rem venv-style prompt prefix: every prompt line shows `(winux) ` in front (like
 rem Python's (.venv) prefix) so an activated window is recognizable at a glance.
 rem The previous PROMPT is saved so winux-deactivate.cmd can restore it exactly
 rem (PROMPT may be unset, in which case cmd's default is $P$G).
-if not defined WINUX_OLD_PROMPT (
-    if defined PROMPT (set "WINUX_OLD_PROMPT=%PROMPT%") else (set "WINUX_OLD_PROMPT=$P$G")
-)
+if defined WINUX_OLD_PROMPT goto :have_prompt
+if defined PROMPT set "WINUX_OLD_PROMPT=%PROMPT%"
+if not defined WINUX_OLD_PROMPT set "WINUX_OLD_PROMPT=$P$G"
+:have_prompt
 set "PROMPT=(winux) %WINUX_OLD_PROMPT%"
 rem cmd.exe resolves its own internal commands before PATH, so bind those names
 rem to winux with doskey macros (interactive sessions only, batch files unaffected).
@@ -46,3 +49,4 @@ doskey echo=winux.exe echo $*
 doskey date=winux.exe date $*
 echo winux activated: cp rm mv mkdir touch grep cat cd less vi and more are now available.
 echo Type "winux --help" for the full command list.
+goto :eof
