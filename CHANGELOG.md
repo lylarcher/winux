@@ -3,6 +3,43 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-11-19 · 新增 `nohup`：后台脱离控制台运行，关窗口/断会话后继续跑**：
+  - Windows 没有 SIGHUP：关控制台窗口会向挂在该控制台上的每个进程发
+    `CTRL_CLOSE_EVENT` 然后终止它。所以 nohup 的等价做法是**不挂在控制台上**：
+    子进程以 `DETACHED_PROCESS`（不分配控制台）+ `CREATE_NEW_PROCESS_GROUP` 启动，
+    并先尝试 `CREATE_BREAKAWAY_FROM_JOB` 以脱离 Windows Terminal / IDE 任务运行器 /
+    CI agent 这类作业对象（宿主退出会整组杀掉）；`ERROR_ACCESS_DENIED` /
+    `ERROR_INVALID_PARAMETER` 时自动退回不带 breakaway 的启动，其它错误（找不到
+    可执行文件、工作目录无效）原样上报不重试。POSIX 侧用 `Setsid`（无控制终端，
+    收不到 SIGHUP）。
+  - 选项：`-o/--output FILE`（默认写 `nohup.out`；仅当 stdout/stderr 是控制台才
+    重定向，已被重定向则原样传递，与 GNU 一致；工作目录不可写时退到
+    `%USERPROFILE%\nohup.out`；`-` 表示沿用句柄）、`-a/--append`（默认）、
+    `-t/--truncate`、`-p/--pid-file FILE`、`-P/--print-pid`、`-d/--dir DIR`、
+    `-e/--env NAME=VALUE`（可重复，按名字大小写不敏感替换）、`-w/--wait`
+    （前台等待并返回子进程退出码）、`-i/--ignore-stdin`、`-q/--quiet`。
+  - 退出码同 GNU：`125` 用法错误、`126` 找到但无法启动、`127` 找不到命令；
+    `-w` 时返回子进程自己的退出码（`exec.ExitError.ExitCode()`）。
+  - **参数边界**：第一个非选项词即子命令，其后一切（含 `-f`/`-p`）都属于子命令。
+    为此给 `Flags` 加了 `ParseUntilCommand`（GNU getopt 的 `+` 前缀语义）与
+    `parseOrDieUntilCommand`；`Parse` 仍是原来的全排列行为，不影响其它命令。
+  - **命令解析**：winux 注册的命令通过当前 exe 重入（`tail`/`sh`/`sshd` 等无需依赖
+    PATH shim）；外部命令按 `PATH`+`PATHEXT`（复用 `lookPathAll`，与 `which` 同序）；
+    `.cmd`/`.bat` 走 `cmd /d /s /c`，`.ps1` 走 `powershell -NoProfile -File`。
+    批处理这条路径用 `SysProcAttr.CmdLine` 传入**整条命令行**，而不是让 Go 按
+    `CommandLineToArgvW` 规则拼 argv——cmd.exe 的引号规则不同（`"a b"` 会被 Go
+    转义成 `"a b"`，cmd 还原后交给批处理就成了坏参数，实测直接 1 退出）。
+  - 测试：`core/nohup_test.go`（选项边界/`--`/裸 `-`/未知选项、125·126·127、
+    内置命令重入、`.cmd`/`.ps1` 包装与真实执行、`-w` 退出码、追加/截断、
+    `-d`/`-e`、`--pid-file` 与 `--print-pid` 一致、非控制台时不建 `nohup.out`、
+    目录当命令被拒、**脱离控制台**：用 `GetConsoleProcessList` 断言子进程不在
+    当前控制台的进程表里且存活）；`test/nohup_test.go`（真 exe 进程级：启动器
+    立刻返回、`-P` 与 pid 文件一致、子进程存活；`-w` 返回 3）。
+  - smoke 新增 6 项（`--help` 纳入通用检查、无命令 125、未知命令 127、`-w` 透传
+    退出码、`-o` 落盘、后台启动后子进程仍存活）。
+  - README 增加 `nohup 说明`（为什么 Windows 用 DETACHED_PROCESS 而不是忽略信号、
+    选项表、命令解析与退出码、如何停掉后台进程）。
+
 - **2026-10-26 · `systemctl start` 失败时给事实、能自愈的注册自动修好**：
   - 现象：`systemctl start revtunnel-agent` 只回一句
     `systemctl: revtunnel-agent start failed: Access is denied.` —— 没有操作、

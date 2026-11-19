@@ -247,7 +247,7 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)' -and $ver -match 'from: ') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'open', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh')) {
+            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'open', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh', 'nohup')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -255,6 +255,37 @@ try {
     $openCode = $LASTEXITCODE
     Check 'open rejects a missing path (no window is popped)' `
         (($openCode -eq 1) -and ($openErr -match 'No such file or directory')) (Text $openErr)
+    # ---------------------------------------------- nohup ------------------
+    # GNU semantics first (usage/lookup statuses, the output file), then the
+    # Windows part: the child must outlive the launcher, which is checked by
+    # watching the pid it reports.
+    $noMissing = Invoke-CmdLine "`"${winux}`" nohup >nul 2>&1"
+    Check 'nohup without a command exits 125 (GNU)' ($noMissing -eq 125) "exit=$noMissing"
+    $noLookup = Invoke-CmdLine "`"${winux}`" nohup no-such-command-xyz >nul 2>&1"
+    Check 'nohup reports an unknown command with exit 127' ($noLookup -eq 127) "exit=$noLookup"
+    $noStatus = Invoke-CmdLine "`"${winux}`" nohup -w -q cmd /c exit 7 >nul 2>&1"
+    Check 'nohup --wait returns the child exit status' ($noStatus -eq 7) "exit=$noStatus"
+    $noLog = Join-Path $work 'nohup.log'
+    Remove-Item $noLog -ErrorAction SilentlyContinue
+    $noWaitOut = Invoke-CmdLine "`"${winux}`" nohup -w -q -o `"$noLog`" cmd /c `"echo nohup-smoke`" >nul 2>&1"
+    Check 'nohup -o captures the output of a command that ran to completion' `
+        (($noWaitOut -eq 0) -and (Test-Path $noLog) -and ((Get-Content $noLog -Raw) -match 'nohup-smoke')) "exit=$noWaitOut"
+    $noBgLog = Join-Path $work 'nohup-bg.log'
+    $noPidFile = Join-Path $work 'nohup-bg.pid'
+    Remove-Item $noBgLog, $noPidFile -ErrorAction SilentlyContinue
+    $noBgLine = "`"${winux}`" nohup -q -o `"$noBgLog`" -p `"$noPidFile`" cmd /c `"ping -n 30 127.0.0.1 >nul`" >nul 2>&1"
+    $noBgOut = Invoke-CmdLine $noBgLine
+    Check 'nohup returns immediately while the child keeps running' ($noBgOut -eq 0) "exit=$noBgOut"
+    if (Test-Path $noPidFile) {
+        $noBgPid = [int]((Get-Content $noPidFile -Raw).Trim())
+        $stillAlive = (Text (& $winux ps -p $noBgPid -o pid,comm)) -match "$noBgPid"
+        Check 'nohup: the detached child is alive after nohup exited' $stillAlive "pid=$noBgPid"
+        & taskkill /pid $noBgPid /t /f | Out-Null
+    }
+    else {
+        Check 'nohup: the detached child is alive after nohup exited' $false 'no pid file'
+    }
+
     Check 'sudo explains the Windows elevation model' ((Text (& $winux sudo --help)) -match 'UAC|administrator')
     Check 'su explains that Windows has no root account' ((Text (& $winux su --help)) -match 'USER|USER')
 

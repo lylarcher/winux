@@ -194,6 +194,17 @@ func parseOrDie(name string, f *Flags, args []string) bool {
 	return true
 }
 
+// parseOrDieUntilCommand is parseOrDie for wrappers (nohup): the first non-option
+// word starts the child command line, so its own options are left untouched.
+func parseOrDieUntilCommand(name string, f *Flags, args []string) bool {
+	if err := f.ParseUntilCommand(args); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", name, err)
+		fmt.Fprintf(os.Stderr, "Try '%s --help' for more information.\n", name)
+		return false
+	}
+	return true
+}
+
 // handleHelpVersion returns true when the invocation was answered by
 // --help/--version and the command should stop.
 func handleHelpVersion(name, argSpec string, f *Flags) bool {

@@ -73,7 +73,16 @@ func (f *Flags) add(s *Flag) {
 	}
 }
 
-func (f *Flags) Parse(args []string) error {
+func (f *Flags) Parse(args []string) error { return f.parse(args, false) }
+
+// ParseUntilCommand parses options only up to the first non-option word and
+// puts that word plus everything after it into Positional. This is GNU getopt's
+// "+" prefix, which the tools that wrap another program use: `nohup tail -f
+// app.log` must hand "-f app.log" to tail instead of rejecting -f as its own
+// option. Full case below (Parse) keeps permuting, like GNU getopt without "+".
+func (f *Flags) ParseUntilCommand(args []string) error { return f.parse(args, true) }
+
+func (f *Flags) parse(args []string, untilCommand bool) error {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -91,6 +100,10 @@ func (f *Flags) Parse(args []string) error {
 				return err
 			}
 		default:
+			if untilCommand {
+				f.Positional = append(f.Positional, args[i:]...)
+				return nil
+			}
 			f.Positional = append(f.Positional, a)
 		}
 	}

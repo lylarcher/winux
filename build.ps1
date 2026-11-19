@@ -46,7 +46,7 @@ $commands = @(
     'passwd', 'vi', 'vim', 'wc', 'which', 'whoami',
     'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse',
     'mongodb', 'psql', 'sqlite',
-    'systemctl', 'svchost', 'sshd', 'wssh'
+    'systemctl', 'svchost', 'sshd', 'wssh', 'nohup', 'paths'
 )
 
 $env:GOTELEMETRY = 'off'

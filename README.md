@@ -241,6 +241,7 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `open` | **自定义命令**（非 Linux 命令）：把路径交给 Windows 资源管理器/默认应用打开——目录用资源管理器打开，文件用默认程序打开；`open .` 当前目录、`open ..`/`open ../` 父目录、`open ~` 用户目录；支持一次给多个路径（见「open 说明」） |
 | `paths` | **自定义命令**（非 Linux 命令）：Windows 常用文件/目录路径的关键词表。`winux paths` 列出全部，`winux paths -q 关键词` 只输出路径（脚本用），`--json`/`-e`/`-s TEXT` 按需过滤；**关键词本身也能当命令用**：`winux hosts` 直接打印 hosts 的路径、状态和常用操作（见「常用路径提醒」） |
 
+| `nohup` | 让命令免疫「挂断」：后台脱离控制台运行，关掉窗口/断开会话后继续跑。`-o FILE` 输出文件（默认 `nohup.out`）、`-a` 追加/`-t` 截断、`-p FILE` 写 PID、`-P` 打印 PID、`-d DIR` 工作目录、`-e NAME=VALUE` 环境变量、`-w` 改为前台等待并传递退出码；退出码 125/126/127 同 GNU（见「nohup 说明」） |
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
 ## 通配符与引号
@@ -902,6 +903,54 @@ myhosts|hosts	D:\alt\hosts	file	我自己的 hosts	admin
   打印半截路径）；
 - 多行写错只跳过坏行并在 stderr 提示行号，不影响其它条目；
 - `WINUX_PATHS_FILE=<路径>` 可整体替换用户表文件的位置（测试与便携部署用）。
+
+## nohup 说明
+
+Linux 的 `nohup` 是「忽略 SIGHUP + 后台 + 输出重定向」三件事。Windows 没有 SIGHUP：
+关掉控制台窗口（或断开 RDP/SSH 会话）时，系统会给**挂在同一个控制台上的每个进程**
+发 `CTRL_CLOSE_EVENT`，几秒后直接终止。所以这里等价的做法是**干脆不挂在这个控制台上**：
+
+- 子进程用 `DETACHED_PROCESS` 启动（不分配控制台）：关窗口、Ctrl+C 都碰不到它；
+- 加 `CREATE_NEW_PROCESS_GROUP`：按给本进程组的 Ctrl+Break 也打不到它；
+- 再尝试 `CREATE_BREAKAWAY_FROM_JOB`：`Windows Terminal`、IDE 任务运行器、CI agent
+  这类**作业对象（Job）**在宿主退出时会连同子进程一起被杀，breakaway 让子进程脱离它；
+  若外层 Job 不允许（`ERROR_ACCESS_DENIED`）则自动退回不带 breakaway 的启动方式。
+
+```bat
+:: 后台跑，输出进 app.log，父窗口/脚本退出后继续
+winux nohup -o app.log -p app.pid "C:\Program Files\nodejs\node.exe" server.js
+winux nohup -o app.log -- node -v
+
+:: 标准用法：GNU 的 nohup.out + 追加输出
+winux nohup tail -f app.log          :: 参数 -f 属于 tail，不会被当成 nohup 的选项
+winux nohup sh -c "sleep 30"
+```
+
+选项（GNU 有的名字保持一致，另外补了几个 Windows 上真正需要的）：
+
+| 选项 | 说明 |
+|---|---|
+| `-o, --output FILE` | stdout+stderr 写 FILE；`-` 表示沿用当前句柄。不给 `-o` 时：输出是控制台才写 `nohup.out`（工作目录不可写则退到 `%USERPROFILE%\nohup.out`），已被重定向则原样传递（与 GNU 一致） |
+| `-a, --append` / `-t, --truncate` | 追加（默认，同 GNU）/ 先清空 |
+| `-p, --pid-file FILE` | 把子进程 PID 写入 FILE（脚本里取 `%!` 的替代品） |
+| `-P, --print-pid` | 把子进程 PID 打到 stdout |
+| `-d, --dir DIR` | 在 DIR 里启动子进程 |
+| `-e, --env NAME=VALUE` | 给子进程设置环境变量（可重复） |
+| `-w, --wait` | 不脱离：前台等待子进程并返回它的退出码（调试/脚本用） |
+| `-i, --ignore-stdin` | 即使 `-w` 也把 stdin 接到空设备 |
+| `-q, --quiet` | 不打印提示信息 |
+
+行为要点：
+
+- **参数边界**：第一个非选项词就是子命令，之后的一切（包括 `-f -p` 之类）都属于子命令，
+  不会被 nohup 抢走（GNU getopt 的 `+` 语义）；
+- **命令解析**：winux 自己的命令（`tail`/`sh`/`sshd`…）直接通过当前 winux.exe 重入，
+  不依赖 PATH 上的 `.cmd` shim；外部命令按 `PATH`+`PATHEXT` 查找（与 `which` 相同）；
+  `.cmd`/`.bat` 交给 `cmd /d /s /c`（`npm`、`mvn.cmd` 这类工具能直接跑），`.ps1` 交给
+  `powershell -NoProfile -File`；
+- **退出码**：`125` 用法错误、`126` 找到但起不来、`127` 找不到命令；`-w` 时返回子进程自己的退出码；
+- 前台/后台都可用；后台成功时 nohup 自身的退出码是 0，PID 用 `-p`/`-P` 取；
+- 停掉后台进程：`winux ps -p <pid>` 确认后 `taskkill /pid <pid> /t /f`（或 `winux systemctl`）。
 
 ## 构建与测试
 
