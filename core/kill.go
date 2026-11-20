@@ -52,8 +52,8 @@ type signalDef struct {
 // expects to type. Signals outside it are rejected with an explanation.
 var signalTable = []signalDef{
 	{1, "HUP", actGraceful, "ask the process to exit (same as TERM here)"},
-	{2, "INT", actGraceful, "Ctrl+Break for a console process in this console, else ask to exit"},
-	{3, "QUIT", actGraceful, "same as INT; no core dump on Windows"},
+	{2, "INT", actGraceful, "same as TERM: Windows cannot deliver Ctrl+C to another process"},
+	{3, "QUIT", actGraceful, "same as TERM; no core dump on Windows"},
 	{4, "ILL", actUnsupported, ""},
 	{5, "TRAP", actUnsupported, ""},
 	{6, "ABRT", actForce, "terminate outright (there is no abort-with-coredump)"},
