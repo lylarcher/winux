@@ -241,6 +241,9 @@ venv 之外另一种显式选择；但即便不 install，只要 `winux` 可用�
 | `open` | **自定义命令**（非 Linux 命令）：把路径交给 Windows 资源管理器/默认应用打开——目录用资源管理器打开，文件用默认程序打开；`open .` 当前目录、`open ..`/`open ../` 父目录、`open ~` 用户目录；支持一次给多个路径（见「open 说明」） |
 | `paths` | **自定义命令**（非 Linux 命令）：Windows 常用文件/目录路径的关键词表。`winux paths` 列出全部，`winux paths -q 关键词` 只输出路径（脚本用），`--json`/`-e`/`-s TEXT` 按需过滤；**关键词本身也能当命令用**：`winux hosts` 直接打印 hosts 的路径、状态和常用操作（见「常用路径提醒」） |
 
+| `kill` | 给进程发信号（POSIX 名字映射到 Windows 机制）：`kill PID`（TERM：先请求退出，控制台进程无法被礼貌通知则 3 秒后强制）、`-9/--kill`（立即强制）、`-STOP`/`-CONT`（挂起/恢复）、`-0`（只检查是否存在）、`-s/--signal SIG`、`-l [SIG]`、`-L`（信号表+Windows 含义）、`-t/--tree`（连子进程，`taskkill /T`）、负 PID = 该进程的整棵树（见「kill / pkill 说明」） |
+| `pkill` | 按名字或命令行正则发信号：`pkill [-SIGNAL] [-fivx] [-u USER] [-P PPID] [-n\|-o] PATTERN`；`-f` 匹配整条命令行、`-x` 全串匹配、`-i`（Windows 上默认已忽略大小写）、`-u` 所有者、`-P` 父进程、`-n/-o` 只选最新/最旧；扩展：`--dry-run`（只打印将发信号的进程）、`--count`（打印个数）、`--graceful-only`（不升级为强制） |
+| `pgrep` | 与 `pkill` 同一匹配器，只列不杀：`pgrep [-flavx] [-u USER] [-P PPID] [-n\|-o] PATTERN`；`-l` 带进程名、`-a` 带命令行、`-c` 只打印数量（`pkill` 的天然干跑） |
 | `nohup` | 让命令免疫「挂断」：后台脱离控制台运行，关掉窗口/断开会话后继续跑。`-o FILE` 输出文件（默认 `nohup.out`）、`-a` 追加/`-t` 截断、`-p FILE` 写 PID、`-P` 打印 PID、`-d DIR` 工作目录、`-e NAME=VALUE` 环境变量、`-w` 改为前台等待并传递退出码；退出码 125/126/127 同 GNU（见「nohup 说明」） |
 运行 `winux --help` 查看全部命令，`winux <命令> --help` 查看单个命令用法。
 
@@ -951,6 +954,59 @@ winux nohup sh -c "sleep 30"
 - **退出码**：`125` 用法错误、`126` 找到但起不来、`127` 找不到命令；`-w` 时返回子进程自己的退出码；
 - 前台/后台都可用；后台成功时 nohup 自身的退出码是 0，PID 用 `-p`/`-P` 取；
 - 停掉后台进程：`winux ps -p <pid>` 确认后 `taskkill /pid <pid> /t /f`（或 `winux systemctl`）。
+
+## kill / pkill 说明
+
+Windows 没有 POSIX 信号，所以 `kill` 把能兑现的信号映射到真实机制，兑现不了的就明确报错，
+不假装成功：
+
+| 信号 | Windows 上实际做什么 |
+|---|---|
+| `TERM` `INT` `QUIT` `HUP`（默认 TERM） | 先"礼貌请求"：GUI 程序收 `WM_CLOSE`（`taskkill /PID`）。Windows 无法礼貌通知控制台进程，所以 3 秒内没退出就**强制结束**（等同 `-9`）；加 `--graceful-only` 则改为报错、让你自己决定 |
+| `KILL`/`-9` | 直接 `TerminateProcess`（`taskkill /F`）；不做任何"请求" |
+| `STOP` `TSTP` | `NtSuspendProcess` 挂起（进程还在，只是不调度） |
+| `CONT` | `NtResumeProcess` 恢复 |
+| `0` | 只检查存在：存在退 0，不存在退 1（脚本里判断活着的标准写法） |
+| 其它（`USR1` `PIPE` `ALRM` …） | 不支持，直接报错退出 1（并提示可用的几个） |
+
+**为什么不发 Ctrl+Break**：`GenerateConsoleCtrlEvent` 只能按「进程组」发，而且只作用于**本控制台**，
+实测用它"礼貌停一个子进程"会把发起命令的整个 shell 一起打死（目标反而还活着）。所以这条路径被
+彻底放弃，改用上表的行为。
+
+行为细节：
+
+- 退出码：全部成功 0；有一个失败 1；用法/信号写错 2（与 winux 其它命令一致）；
+- 错误文本沿用 GNU 措辞：`No such process`、`Operation not permitted`（例如杀受保护/提权进程）；
+- `-t/--tree` 连后代一起杀；**负 PID**（POSIX 的进程组写法，需放在 `--` 之后）在 Windows 上表示
+  「以该 pid 为根的那棵树」；
+- `pkill` 默认按**镜像名**匹配（去掉 `.exe`），`-f` 改匹配整条命令行；默认忽略大小写——Windows 报告
+  的镜像名可能是磁盘上的大写形式（`PING.EXE`），不忽略大小写 `pgrep ping` 会找不到东西；
+- `pkill`/`pgrep` 永不匹配自己和自己的直接子进程（避免把"枚举进程用的那个 powershell"一起杀掉）；
+  但它**可以**匹配到你的 shell —— 如果你的 shell 命令行里正好含有该模式（GNU 同样如此）；
+- 模式是**正则**，模式以 `-` 开头要放在 `--` 之后；`-P`/`-u` 存在时可以不写模式；
+- 没有任何匹配时退出码 1（同 GNU）。
+
+```bat
+:: 看有什么在跑，再决定
+winux pgrep -l -x ping
+winux pgrep -a -f "node .*server"
+winux pgrep -c -u lyl
+
+:: 干跑：只打印将要发信号的进程
+winux pkill --dry-run -f "java -jar"
+
+:: 真杀
+winux kill 1234                 :: TERM：礼貌请求，控制台进程 3 秒后强制
+winux kill -9 1234              :: 立刻强制
+winux kill -t 1234              :: 连子进程
+winux kill -9 -- -1234          :: 同上（POSIX 负 PID 写法）
+winux pkill -9 -x notepad
+winux pkill -STOP -f "ffmpeg"   :: 暂停；-CONT 恢复
+
+:: 只检查活着没有（脚本常用）
+winux kill -0 1234 && echo alive
+winux kill -L                   :: 信号表 + Windows 含义
+```
 
 ## 构建与测试
 

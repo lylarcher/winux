@@ -141,6 +141,12 @@ func printGlobalHelp() {
 // printUsage renders a GNU-ish help screen from the registered flag specs.
 func printUsage(name, argSpec string, f *Flags) {
 	fmt.Printf("Usage: %s [OPTION]... %s\n", name, argSpec)
+	printFlagList(f)
+}
+
+// printFlagList renders the option block that printUsage puts under the usage
+// line; commands with a non-GNU synopsis (kill, pkill) print their own header.
+func printFlagList(f *Flags) {
 	fmt.Println("Options:")
 	for _, s := range f.specs {
 		var left string

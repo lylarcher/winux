@@ -20,6 +20,8 @@ var (
 	procSetConsoleOutputCP         = kernel32.NewProc("SetConsoleOutputCP")
 	procGetConsoleScreenBufferInfo = kernel32.NewProc("GetConsoleScreenBufferInfo")
 	procGetConsoleWindow           = kernel32.NewProc("GetConsoleWindow")
+	procGetConsoleProcessList      = kernel32.NewProc("GetConsoleProcessList")
+	procGenerateConsoleCtrlEvent   = kernel32.NewProc("GenerateConsoleCtrlEvent")
 	procOpenProcess                = kernel32.NewProc("OpenProcess")
 	procCloseHandle                = kernel32.NewProc("CloseHandle")
 	procWaitForSingleObject        = kernel32.NewProc("WaitForSingleObject")
@@ -182,7 +184,7 @@ func readPassword(prompt string) (line string, hidden bool) {
 	restore := func() {}
 	mode, ok := consoleMode(in)
 	if ok {
-		procSetConsoleMode.Call(in.Fd(), uintptr(mode &^ enableEchoInput))
+		procSetConsoleMode.Call(in.Fd(), uintptr(mode&^enableEchoInput))
 		restore = func() { procSetConsoleMode.Call(in.Fd(), uintptr(mode)) }
 	}
 	fmt.Fprint(os.Stderr, prompt)

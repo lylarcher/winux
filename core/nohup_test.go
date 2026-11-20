@@ -19,8 +19,6 @@ import (
 	"unsafe"
 )
 
-var procGetConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
-
 // consoleProcessIDs lists the processes attached to this console (empty when
 // the test runs without one, e.g. under a service).
 func consoleProcessIDs() []uint32 {

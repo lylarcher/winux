@@ -247,7 +247,7 @@ try {
         ($ver -match '^winux (?:[0-9a-f]{8}|1\.0\.0) \(built \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)' -and $ver -match 'from: ') $ver
     foreach ($cmd in @('cp', 'rm', 'mv', 'mkdir', 'touch', 'grep', 'cat', 'more', 'less', 'tail', 'vi', 'sudo', 'su',
             'chmod', 'chown', 'chgrp', 'useradd', 'userdel', 'usermod', 'groupadd', 'groupdel', 'passwd', 'cal', 'ps', 'ls', 'du',
-            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'open', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh', 'nohup')) {
+            'netstat', 'ss', 'lsof', 'ip', 'ifconfig', 'ipconfig', 'nmcli', 'nmtui', 'open', 'sh', 'mysql', 'redis-cli', 'tcpdump', 'nc', 'netcat', 'clickhouse', 'uptime', 'mongodb', 'psql', 'sqlite', 'systemctl', 'svchost', 'sshd', 'wssh', 'nohup', 'kill', 'pkill', 'pgrep')) {
         $h = Text (& $winux $cmd --help)
         Check "$cmd --help prints a usage line" ($h -match 'Usage:')
     }
@@ -255,6 +255,40 @@ try {
     $openCode = $LASTEXITCODE
     Check 'open rejects a missing path (no window is popped)' `
         (($openCode -eq 1) -and ($openErr -match 'No such file or directory')) (Text $openErr)
+    # ------------------------------------ kill / pkill / pgrep ---------------
+    # Only our own child processes are targeted, never anything else on the box.
+    $kList = Text (& $winux kill -l KILL)
+    Check 'kill -l KILL prints the signal number' ($kList.Trim() -eq '9') $kList
+    Check 'kill -L documents the Windows mechanism' ((Text (& $winux kill -L)) -match 'TerminateProcess')
+    $selfCheck = Invoke-CmdLine "`"${winux}`" kill -0 $PID"
+    Check 'kill -0 succeeds for a live pid' ($selfCheck -eq 0) "exit=$selfCheck"
+    $deadCheck = Invoke-CmdLine "`"${winux}`" kill -0 999999 >nul 2>&1"
+    Check 'kill -0 fails for a pid that does not exist' ($deadCheck -eq 1) "exit=$deadCheck"
+    $userCount = Text (& $winux pgrep -c -u $env:USERNAME)
+    Check 'pgrep -c -u USER counts our own processes' ([int]$userCount.Trim() -gt 0) $userCount
+    $noMatchKill = Invoke-CmdLine "`"${winux}`" pkill --dry-run -x no-such-process-xyz >nul 2>&1"
+    Check 'pkill reports no match without touching anything' ($noMatchKill -eq 1) "exit=$noMatchKill"
+    $killLog = Join-Path $work 'kill-bg.log'
+    $killPidFile = Join-Path $work 'kill-bg.pid'
+    Remove-Item $killLog, $killPidFile -ErrorAction SilentlyContinue
+    & $winux nohup -q -o $killLog -p $killPidFile cmd /c "ping -n 30 127.0.0.1 >nul" | Out-Null
+    Start-Sleep -Milliseconds 500
+    if (Test-Path $killPidFile) {
+        $bgPid = [int]((Get-Content $killPidFile -Raw).Trim())
+        $aliveBefore = Invoke-CmdLine "`"${winux}`" kill -0 $bgPid"
+        Check 'kill -0 sees the background child started by nohup' ($aliveBefore -eq 0) "exit=$aliveBefore"
+        $killRes = Invoke-CmdLine "`"${winux}`" kill -9 $bgPid"
+        Check 'kill -9 terminates a process' ($killRes -eq 0) "exit=$killRes"
+        Start-Sleep -Milliseconds 400
+        $aliveAfter = Invoke-CmdLine "`"${winux}`" kill -0 $bgPid >nul 2>&1"
+        Check 'kill -0 fails once the process is gone' ($aliveAfter -eq 1) "exit=$aliveAfter"
+    }
+    else {
+        Check 'kill -0 sees the background child started by nohup' $false 'no pid file'
+        Check 'kill -9 terminates a process' $false 'no pid file'
+        Check 'kill -0 fails once the process is gone' $false 'no pid file'
+    }
+
     # ---------------------------------------------- nohup ------------------
     # GNU semantics first (usage/lookup statuses, the output file), then the
     # Windows part: the child must outlive the launcher, which is checked by

@@ -3,6 +3,41 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-11-20 · 新增 `kill` / `pkill` / `pgrep`：给进程发信号、按名字匹配进程**：
+  - 现状确认：此前 winux 没有 kill/pkill（命令表里也没有），本次补上。
+  - `kill`：GNU 语法的信号写法 `kill -9 PID` / `kill -s TERM PID` / `kill -KILL PID`、
+    `-l [SIG]`（名字↔编号互查）、`-L`（信号表+Windows 含义）、`-0`（只检查存在）、
+    `--`（负 PID 写法的前置）、`-t/--tree`（连后代，`taskkill /T`）、`--graceful-only`。
+    **Windows 映射**：TERM/INT/QUIT/HUP = 先请求退出（GUI 走 `taskkill /PID` 的 WM_CLOSE，
+    控制台进程无法被礼貌通知），3 秒内没退出则升级为强制结束（`--graceful-only` 改为报错）；
+    KILL = 直接 `TerminateProcess`；STOP/TSTP = `NtSuspendProcess`；CONT = `NtResumeProcess`；
+    0 = `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` 判存在；其余信号明确报"不支持"退出 1。
+  - **放弃 Ctrl+Break 路线（重要）**：初版用 `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)`
+    做"礼貌通知"，实测把发起命令的整个 shell 打死（退出码 0xC000013A），目标进程反而还活着——
+    该 API 只能按进程组、且只作用于本控制台。该路径已删除，改为上表的语义，并在文档中写明原因。
+  - 错误文本沿用 GNU：`No such process`（ERROR_INVALID_PARAMETER/NOT_FOUND）、
+    `Operation not permitted`（ERROR_ACCESS_DENIED，如杀 System/提权进程）；退出码 0/1/2。
+  - `pkill`/`pgrep`：共用一套选择器，模式是正则；默认匹配镜像名（去 `.exe`）、`-f` 匹配命令行、
+    `-x` 全串、`-u USER`、`-P PPID`、`-n/-o`（最新/最旧）、`-v`（反向）、`pgrep` 的 `-l/-a/-c`、
+    `pkill` 的 `--dry-run` 与 `--count`；`-P`/`-u` 存在时模式可省略；无匹配退 1；
+    永不匹配自身与其直接子进程（否则会杀掉枚举进程用的 powershell）。`killall` 别名未注册
+    （语义与 GNU killall 不同，避免误导）。
+  - **默认忽略大小写**：Windows 报告的镜像名是磁盘上的大小写（`PING.EXE`），案例实测
+    `pgrep ping` 会 0 命中、`pgrep -v -c ping` 却是 349——改成默认 `(?i)`（`-i` 仍可用但冗余）。
+  - 修 `procSelector.parent` 的零值陷阱：未设 `-P` 时 0 会被当成"父进程 0"从而过滤掉一切，
+    改为 `parent > 0` 才启用过滤（单测因此暴露）。
+  - 平台层：`kill_windows.go`（Win32/x/sys）+ `kill_other.go`（POSIX：SIGTERM/SIGKILL/SIGSTOP/
+    SIGCONT），因此 linux/darwin 交叉编译可过。
+  - 测试：`core/kill_test.go` 覆盖信号拼写（含 `-KILL`/`sigterm`/`0`/越界编号/`BOGUS`）、PID
+    操作数（负值=树、0/非数字报错）、`-l/-L` 输出、选项错误码、**真实子进程**的 `-0`/`-9`/
+    TERM 升级/`--graceful-only`/STOP+CONT/`-t` 连坐；选择器的纯数据单测（正则、`-x`、`-f`
+    含回退、`-v`、`-u` 域名/裸名、`-P`、`-n/-o`、非法正则）；`pgrep`/`pkill` 输出与退出码，
+    以及 `-P` 限定下 `--dry-run` 不动进程、`-9` 只杀本测试的子进程。
+  - smoke 新增 7 项（`--help`、`kill -l KILL`、`kill -L`、`kill -0` 活/死、nohup 子进程被
+    `kill -0`/`-9` 成对验证、`pgrep -c -u` > 0、`pkill --dry-run` 无匹配退 1）。
+  - README 增加「kill / pkill 说明」（信号映射表、为何不用 Ctrl+Break、大小写、正则与 `--`、
+    负 PID、退出码、示例）；`build.ps1` 的 `-RealExes` 清单加入 kill/pkill/pgrep。
+
 - **2026-11-19 · 新增 `nohup`：后台脱离控制台运行，关窗口/断会话后继续跑**：
   - Windows 没有 SIGHUP：关控制台窗口会向挂在该控制台上的每个进程发
     `CTRL_CLOSE_EVENT` 然后终止它。所以 nohup 的等价做法是**不挂在控制台上**：
