@@ -292,10 +292,16 @@ Linux 风格的 `a && b`、`a || b` 链式写法：**Windows PowerShell 5.1 在�
 等价写法再交给 PowerShell 解析：
 
 ```
-a && b   ->   a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; ... }
-a || b   ->   a; $__winuxChainOk = $?; if (-not $__winuxChainOk) { b; ... }
+a && b        ->   a; if ($?) { b }
+a && b && c   ->   a; if ($?) { b; if ($?) { c } }
+a || b        ->   a; if (-not $?) { b }
+a && b || c   ->   a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; ... }   (混合链才用状态变量)
 ```
 
+- **注意这只是"改写"，不是"替换"**：按回车那一刻，你输入的那一行会**显示成上面右边的形式**
+  （行编辑器就地改了 buffer），历史里存的也是改后的行。功能与语义不受影响，只是看起来
+  跟你打的不一样；纯 `&&`/`||` 链会改写成最短的嵌套 `if ($?)` 形式，混合链才会出现
+  `$__winuxChainOk`（那是为了让 `a && b || c` 与 shell 完全一致）。
 - 语义与 shell 一致：**从左到右**，`a && b || c` 在 a 失败**或** b 失败时都会跑 c；
   判断依据是 PowerShell 的 `$?`（对 native 程序就是退出码 0）；
 - **只切分顶层的 `&&`/`||`**：引号内、`()`/`[]`/`{}` 内、`#` 注释之后的都当普通文本，
@@ -306,7 +312,11 @@ a || b   ->   a; $__winuxChainOk = $?; if (-not $__winuxChainOk) { b; ... }
 - 仅对 Windows PowerShell 5.1 生效：**PowerShell 7** 原生支持 `&&`/`||`，**cmd.exe** 也原生支持，
   两者都不装这个钩子；
 - 作用于**交互式输入**（行编辑器层面），脚本文件里的 `&&` 仍然要按 PowerShell 5.1 语法写；
-- 历史记录里存的是改写后的形式（改写在按回车那一刻生效）；
+- **GUI 子系统程序不受影响也不可补救**：PowerShell 不等 GUI 程序结束、也不设 `$LASTEXITCODE`，
+  所以它们的 `$?` 恒为真（`windows-gui.exe --x && next` 里的 next 一定会跑），它们的输出是
+  异步晚到的，容易被行编辑器重绘盖掉。命令行工具请编译成**控制台子系统**（Go 默认即如此，
+  不要加 `-H windowsgui`），需要"既当托盘程序又当 CLI"时用「控制台子系统 + 启动后
+  `FreeConsole()` / `-H windowsgui` 只用于纯 GUI 版本」的分体做法；
 - 关掉：激活前 `$env:WINUX_PS_CHAINS = '0'`；`winux-deactivate` 会把回车键恢复成 `AcceptLine`；
 - 不想用钩子时的等价写法：`a; if ($?) { b }`，或直接进 `winux sh`（Linux 语义的 shell），
   或 `winux sh -c 'a && b'`。

@@ -79,10 +79,36 @@ func cmdPSChain(args []string) int {
 // psChainRewrite turns `a && b || c` into a single PowerShell line with the
 // same meaning. changed is false when there was nothing to rewrite, in which
 // case out is the input unchanged.
+//
+// The line is shown verbatim at the prompt after Enter (the line editor rewrites
+// the buffer in place), so the rewrite is kept as short and as readable as the
+// semantics allow:
+//
+//	a && b          ->  a; if ($?) { b }
+//	a && b && c     ->  a; if ($?) { b; if ($?) { c } }
+//	a || b          ->  a; if (-not $?) { b }
+//	a && b || c      ->  a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; ... }
+//
+// A chain of one operator type nests, which is exactly the shell's left-to-right
+// "did the previous step succeed?" test. A mixed chain needs the status variable,
+// because after `a && b` the next step must look at b's status (and still fall
+// through to the || branch when a itself failed) — the shell's rule.
 func psChainRewrite(line string) (out string, changed bool) {
 	segs, ops, ok := psSplitChain(line)
 	if !ok || len(ops) == 0 {
 		return line, false
+	}
+	if allOps(ops, "&&") || allOps(ops, "||") {
+		cond := "$?"
+		if ops[0] == "||" {
+			cond = "-not $?"
+		}
+		// nest from the end so each level wraps the rest
+		body := segs[len(segs)-1]
+		for i := len(ops) - 1; i >= 0; i-- {
+			body = segs[i] + "; if (" + cond + ") { " + body + " }"
+		}
+		return body, true
 	}
 	var b strings.Builder
 	b.WriteString(segs[0])
@@ -103,6 +129,15 @@ func psChainRewrite(line string) (out string, changed bool) {
 		b.WriteString(" = $? }")
 	}
 	return b.String(), true
+}
+
+func allOps(ops []string, want string) bool {
+	for _, op := range ops {
+		if op != want {
+			return false
+		}
+	}
+	return len(ops) > 0
 }
 
 // psSplitChain splits a PowerShell line at its top-level `&&` and `||`

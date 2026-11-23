@@ -7,6 +7,7 @@ package core
 // PowerShell session, see TestPSChainEvaluatesLikeTheShell).
 
 import (
+	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
@@ -19,13 +20,25 @@ func TestPSChainRewriteChains(t *testing.T) {
 		changed bool
 	}{
 		{
+			// one operator type nests, so the line stays short and readable at
+			// the prompt (the line editor shows it verbatim after Enter)
 			in:      "a && b",
-			want:    "a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; $__winuxChainOk = $? }",
+			want:    "a; if ($?) { b }",
 			changed: true,
 		},
 		{
 			in:      "a || b",
-			want:    "a; $__winuxChainOk = $?; if (-not $__winuxChainOk) { b; $__winuxChainOk = $? }",
+			want:    "a; if (-not $?) { b }",
+			changed: true,
+		},
+		{
+			in:      "a && b && c",
+			want:    "a; if ($?) { b; if ($?) { c } }",
+			changed: true,
+		},
+		{
+			in:      "a || b || c",
+			want:    "a; if (-not $?) { b; if (-not $?) { c } }",
 			changed: true,
 		},
 		{
@@ -36,9 +49,9 @@ func TestPSChainRewriteChains(t *testing.T) {
 			changed: true,
 		},
 		{
-			// the real-world line that motivated this
+			// the real-world line that motivated this (all &&, so it nests)
 			in:      `nohup kill -9 34780 && kill -9 42356 && mv .\RdpAgent.exe .\rdp-agent\ && cd .\rdp-agent`,
-			want:    `nohup kill -9 34780; $__winuxChainOk = $?; if ($__winuxChainOk) { kill -9 42356; $__winuxChainOk = $? }; if ($__winuxChainOk) { mv .\RdpAgent.exe .\rdp-agent\; $__winuxChainOk = $? }; if ($__winuxChainOk) { cd .\rdp-agent; $__winuxChainOk = $? }`,
+			want:    `nohup kill -9 34780; if ($?) { kill -9 42356; if ($?) { mv .\RdpAgent.exe .\rdp-agent\; if ($?) { cd .\rdp-agent } } }`,
 			changed: true,
 		},
 		{in: "just one command", want: "just one command", changed: false},
@@ -80,7 +93,7 @@ func TestPSChainRewriteLeavesQuotedAndNestedTextAlone(t *testing.T) {
 
 	// a quoted && plus a real one: only the real one splits, quoted text survives
 	got, changed := psChainRewrite(`echo "a && b" && echo c`)
-	want := `echo "a && b"; $__winuxChainOk = $?; if ($__winuxChainOk) { echo c; $__winuxChainOk = $? }`
+	want := `echo "a && b"; if ($?) { echo c }`
 	if !changed || got != want {
 		t.Errorf("quoted-then-real = %q (changed %v), want %q", got, changed, want)
 	}
@@ -109,18 +122,30 @@ func TestPSChainEvaluatesLikeTheShell(t *testing.T) {
 		{"cmd /c exit 0 && cmd /c exit 1 || Write-Output rescued", "rescued"},
 		// a && b || c with both fine -> c does not run
 		{"cmd /c exit 0 && cmd /c exit 0 || Write-Output must-not-run", ""},
+		// three steps: the middle failure must stop the last one
+		{"cmd /c exit 0 && cmd /c exit 0 && Write-Output third-ran", "third-ran"},
+		{"cmd /c exit 0 && cmd /c exit 1 && Write-Output must-not-run", ""},
+		{"cmd /c exit 1 || cmd /c exit 1 || Write-Output rescue-ran", "rescue-ran"},
 	}
 	for _, c := range cases {
 		rewritten, changed := psChainRewrite(c.line)
 		if !changed {
 			t.Fatalf("psChainRewrite(%q) did not rewrite", c.line)
 		}
-		out, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", rewritten).CombinedOutput()
-		if err != nil {
-			t.Errorf("rewritten line failed to run: %v (%s)", err, out)
+		// the rewritten line ends with an if, so PowerShell's own exit status is
+		// the chain's status (1 when a step failed). That is expected here; what
+		// matters is that nothing errored (stderr stays empty) and that the
+		// commands ran exactly when the shell would run them.
+		cmd := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", rewritten)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		_ = cmd.Run()
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			t.Errorf("rewritten line wrote to stderr: %s", msg)
 			continue
 		}
-		got := strings.TrimSpace(strings.ReplaceAll(string(out), "\r\n", "\n"))
+		got := strings.TrimSpace(strings.ReplaceAll(stdout.String(), "\r\n", "\n"))
 		if got != c.want {
 			t.Errorf("%q -> %q, want %q", c.line, got, c.want)
 		}
@@ -132,7 +157,7 @@ func TestPSChainCommand(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("__ps-chain exit = %d", code)
 	}
-	if !strings.Contains(out, "if ($__winuxChainOk)") || !strings.Contains(out, "a;") {
+	if !strings.Contains(out, "if ($?)") || !strings.Contains(out, "a;") {
 		t.Errorf("__ps-chain output = %q", out)
 	}
 	// a line without operators comes back verbatim, so the hook can compare

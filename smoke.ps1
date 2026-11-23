@@ -124,10 +124,9 @@ try {
     Check 'activation installs the && / || line-editor hook (PS 5.1)' `
         (($PSVersionTable.PSVersion.Major -ge 7) -or ($hook.Count -ge 1)) (($hook | ForEach-Object { $_.Description }) -join ',')
     $rew = Text (('echo "a && b" && echo c' | & $winux __ps-chain))
-    # the quoted && stays inside its quotes, the real one becomes an if
+    # the quoted && stays inside its quotes, the real one becomes a short if
     Check 'the rewriter keeps quoted && and splits the real one' `
-        (($rew -match 'echo "a && b";') -and ($rew -match '\$__winuxChainOk') -and
-         ($rew -match 'if \(\$__winuxChainOk\) \{ echo c')) $rew
+        (($rew -match 'echo "a && b";') -and ($rew -match 'if \(\$\?\) \{ echo c \}')) $rew
     $quotedOnly = Text (('echo "a && b"' | & $winux __ps-chain))
     Check 'a line without a top-level operator comes back unchanged' ($quotedOnly -eq 'echo "a && b"') $quotedOnly
     $chain = 'cmd /c exit 1 && Write-Output must-not-run'
