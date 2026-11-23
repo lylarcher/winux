@@ -3,6 +3,38 @@
 本文件记录 winux 各版本/各次改动。README 只保留使用文档，这里按时间倒序
 （新条目在上）记录每次变更。
 
+- **2026-11-23 · 激活后的 PowerShell 5.1 可以用 `&&` / `||`（Linux 风格链式命令）**：
+  - 起因：用户粘贴 `nohup kill -9 1 && kill -9 2 && mv ... && cd ...` 到 `(winux) PS>`，
+    得到四条"标记 && 不是此版本中的有效语句分隔符"，整行不执行。
+  - 根因：`&&` 不是 Windows PowerShell 5.1 的分隔符（7.0 才加入），**解析阶段就失败**，
+    任何命令/函数/别名都救不了——只能在"解析之前"动手。
+  - 实现：`winux-activate.ps1` 在 PS<7 且装了 PSReadLine 时，把**回车键**绑到行编辑器
+    钩子：按回车时取出行内容，交给隐藏命令 `winux __ps-chain` 改写，再用
+    `[Parser]::ParseInput` 校验，最后 `Replace`+`AcceptLine` 交给 PowerShell 执行。
+    改写规则：`a && b` → `a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; ... }`，
+    `a || b` → 同样的 `if (-not ...)`；因为每步只看前一步状态，`a && b || c` 与 shell
+    一致（a 失败**或** b 失败都会跑 c）。
+  - `core/pschain.go`：引号/括号/注释感知的顶层切分器（单引号 `''` 转义、双引号反引号转义、
+    `()`/`[]`/`{}` 深度、`#` 注释），**只拆段不重新加引号**，所以引号内 `&&`、管道、重定向、
+    中文路径都原样保留；括号不配对、空段、开头/结尾就是运算符等情形一律不改写（交回
+    PowerShell 自己报错）。
+  - **踩到的坑（重要）**：初版把整行当命令行参数传给 `winux __ps-chain`，PowerShell 5.1
+    重建 native 命令行时会把引号吃掉（`echo "a && b"` 变成 `echo a && b`，于是被错误拆分），
+    与之前 nohup → cmd 的引号规则问题同源。改为**用 stdin 传整行**（`$Line | & winux __ps-chain`），
+    字节原样保留；参数形式仍保留供测试/命令行直接用。
+  - 隐藏命令机制：`command` 增加 `hidden` 字段与 `addHiddenCmd`，`__ps-chain` 不出现在
+    `--help`、不生成 `.cmd` 垫片（`shimExclusions`）。
+  - 关闭与回退：激活前 `$env:WINUX_PS_CHAINS='0'`；`winux-deactivate.ps1` 把回车键恢复为
+    `AcceptLine` 并删除 `__winux-rewrite-chain` 函数；PS7 / cmd.exe 原生支持 `&&`，不装钩子。
+  - 测试：`core/pschain_test.go` —— 改写字符串逐字比对（含用户那条真实命令）、引号/括号/
+    注释/未闭合引号/空段/管道不误伤；**把改写结果交给真实 PowerShell 5.1 执行**，验证
+    `ok&&ok`、`fail&&` 不跑、`fail||` 跑、`ok||` 不跑、`a && b || c` 的两种分支；
+    `__ps-chain` 命令与隐藏性（不进 --help、无 shim）。PowerShell 侧另用探针脚本实测：
+    激活后 `Get-PSReadLineKeyHandler -Bound` 出现 `winux: && and || chains`、`__winux-rewrite-chain`
+    行为正确（含引号保持）、改写结果 0 解析错误、反激活后回车恢复 `AcceptLine`。
+  - README 新增「`&&` 与 `||`（PowerShell 5.1）」小节（原理、语义、限制、关闭方式、
+    等价写法与 `winux sh` 替代）；`winux --help` 的示例行补了一条链式示例。
+
 - **2026-11-20 · 新增 `kill` / `pkill` / `pgrep`：给进程发信号、按名字匹配进程**：
   - 现状确认：此前 winux 没有 kill/pkill（命令表里也没有），本次补上。
   - `kill`：GNU 语法的信号写法 `kill -9 PID` / `kill -s TERM PID` / `kill -KILL PID`、

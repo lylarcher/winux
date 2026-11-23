@@ -37,6 +37,14 @@ if ($env:WINUX_OLD_PATH) {
 Remove-Item Env:WINUX_ACTIVE, Env:WINUX_PREVDIR -ErrorAction SilentlyContinue
 Remove-Variable -Scope Global -Name winuxExe, winuxPrevDir, winuxBin -ErrorAction SilentlyContinue
 
+# drop the && / || line-editor hook installed by winux-activate.ps1 (PowerShell
+# 5.1 only): put Enter back on AcceptLine and remove the helper
+if ($global:winuxChainHook) {
+    try { Set-PSReadLineKeyHandler -Chord Enter -Function AcceptLine -ErrorAction SilentlyContinue } catch { }
+    Remove-Item Function:__winux-rewrite-chain -ErrorAction SilentlyContinue
+    Remove-Variable -Scope Global -Name winuxChainHook, __winuxChainExe -ErrorAction SilentlyContinue
+}
+
 # drop the session functions that winux-activate.ps1 installed (they shadow
 # the cmd\ batch shims so a PowerShell user can type winux-deactivate directly)
 Remove-Item Function:winux-deactivate, Function:winux-activate -ErrorAction SilentlyContinue

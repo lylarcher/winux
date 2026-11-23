@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +24,7 @@ var (
 type command struct {
 	name    string
 	summary string
+	hidden  bool // internal helper: usable, but not advertised in --help or shims
 	run     func([]string) int
 }
 
@@ -35,6 +37,13 @@ func addCmd(name, summary string, run func([]string) int, aliases ...string) {
 	for _, a := range aliases {
 		cmdTable[a] = c
 	}
+}
+
+// addHiddenCmd registers an internal helper: it runs, but it is not listed in
+// --help, gets no .cmd shim and is not part of the public surface.
+func addHiddenCmd(name, summary string, run func([]string) int) {
+	addCmd(name, summary, run)
+	cmdTable[name].hidden = true
 }
 
 func Main() {
@@ -103,23 +112,26 @@ func Main() {
 	os.Exit(c.run(args[1:]))
 }
 
-func printGlobalHelp() {
+func printGlobalHelp() { printGlobalHelpTo(os.Stdout) }
+
+// printGlobalHelpTo renders the command list (the tests capture it).
+func printGlobalHelpTo(w io.Writer) {
 	if BuildTime != "" {
-		fmt.Printf("%s %s (built %s) - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version, BuildTime)
+		fmt.Fprintf(w, "%s %s (built %s) - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version, BuildTime)
 	} else {
-		fmt.Printf("%s %s - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version)
+		fmt.Fprintf(w, "%s %s - Linux-style commands for Windows (cmd.exe and PowerShell)\n", progName, Version)
 	}
-	fmt.Println("Native Go implementation: no WSL, no MSYS2/Cygwin, no Python runtime needed.")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Printf("  %s <command> [OPTION]... [ARGUMENT]...\n", progName)
-	fmt.Println("  <command> [OPTION]... [ARGUMENT]...        via the generated .cmd shims or renamed winux.exe")
-	fmt.Println()
-	fmt.Println("Commands:")
+	fmt.Fprintln(w, "Native Go implementation: no WSL, no MSYS2/Cygwin, no Python runtime needed.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  %s <command> [OPTION]... [ARGUMENT]...\n", progName)
+	fmt.Fprintln(w, "  <command> [OPTION]... [ARGUMENT]...        via the generated .cmd shims or renamed winux.exe")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
 	var list []*command
 	seen := map[*command]bool{}
 	for _, c := range cmdTable {
-		if seen[c] {
+		if seen[c] || c.hidden {
 			continue
 		}
 		seen[c] = true
@@ -127,15 +139,23 @@ func printGlobalHelp() {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].name < list[j].name })
 	for _, c := range list {
-		fmt.Printf("  %-9s %s\n", c.name, c.summary)
+		fmt.Fprintf(w, "  %-9s %s\n", c.name, c.summary)
 	}
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println(`  cp -r src\pkg dst\pkg          rm -rf build\          touch -d "2024-01-02 10:00" a.txt`)
-	fmt.Println(`  grep -rin todo --include=*.go .     tail -f -n 50 app.log     less README.md     vi main.go`)
-	fmt.Println(`  winux hosts                    well-known path reminder (hosts, temp, startup, ...)`)
-	fmt.Println()
-	fmt.Printf("Run '%s <command> --help' for the options of a single command.\n", progName)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, `  cp -r src\pkg dst\pkg          rm -rf build\          touch -d "2024-01-02 10:00" a.txt`)
+	fmt.Fprintln(w, `  grep -rin todo --include=*.go .     tail -f -n 50 app.log     less README.md     vi main.go`)
+	fmt.Fprintln(w, `  winux hosts                    well-known path reminder (hosts, temp, startup, ...)`)
+	fmt.Fprintln(w, `  winux kill -9 1234 && winux kill 1235      (&& and || work at the activated prompt)`)
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Run '%s <command> --help' for the options of a single command.\n", progName)
+}
+
+// GlobalHelpText returns exactly what `winux --help` prints.
+func GlobalHelpText() string {
+	var b strings.Builder
+	printGlobalHelpTo(&b)
+	return b.String()
 }
 
 // printUsage renders a GNU-ish help screen from the registered flag specs.

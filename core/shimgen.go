@@ -34,7 +34,7 @@ var shimFS embed.FS
 // `winux activate/deactivate` are invoked as winux subcommands (a bare
 // activate.cmd on the session PATH could collide with other toolchains) and
 // `shims` is the materializer itself.
-var shimExclusions = map[string]bool{"activate": true, "deactivate": true, "shims": true}
+var shimExclusions = map[string]bool{"activate": true, "deactivate": true, "shims": true, "__ps-chain": true}
 
 // cmdShimTemplate is the per-command batch shim. The sources stay LF in git;
 // crlf() converts them on the way to disk because a batch file MUST be CRLF.

@@ -73,8 +73,9 @@ func Execute(name string, args []string, stdin io.Reader) (int, string, string) 
 	return code, out, errOut
 }
 
-// CommandNames lists every registered command under its primary name
-// (aliases such as vim are folded into their primary vi), sorted.
+// CommandNames lists every public command under its primary name (aliases such
+// as vim are folded into their primary vi), sorted. Hidden helpers such as
+// __ps-chain are not part of the surface and are left out.
 func CommandNames() []string {
 	var names []string
 	for name, c := range cmdTable {

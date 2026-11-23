@@ -95,6 +95,59 @@ function cd {
     $env:WINUX_PREVDIR = $old
 }
 
+# ---- && and || (Windows PowerShell 5.1) -------------------------------------
+# PowerShell parses the whole line before anything runs, and `&&` is not a
+# separator in 5.1 (PowerShell 7 added it), so a pasted Linux one-liner dies
+# with parser errors and nothing executes. The only place left to help is the
+# line editor: bind Enter and rewrite such a line before PowerShell parses it.
+#
+# The rewrite is done by `winux __ps-chain` (C:\path\winux.exe __ps-chain LINE):
+#   a && b   ->  a; $__winuxChainOk = $?; if ($__winuxChainOk) { b; ... }
+#   a || b   ->  a; $__winuxChainOk = $?; if (-not $__winuxChainOk) { b; ... }
+# Chaining stays left to right like the shell, and only top-level && / || are
+# split, so quotes, pipes, redirections and bracket groups inside a segment are
+# passed through untouched. The line is accepted unchanged whenever there is
+# nothing to rewrite, or when the rewrite would not parse.
+#
+# Turn it off for a session:  $env:WINUX_PS_CHAINS = '0'   (set it before activating)
+if ($PSVersionTable.PSVersion.Major -lt 7 -and $env:WINUX_PS_CHAINS -ne '0') {
+    if (Get-Module -ListAvailable PSReadLine) {
+        Import-Module PSReadLine -ErrorAction SilentlyContinue
+        $global:__winuxChainExe = $global:winuxExe
+
+        # Rewrites one typed line; returns it unchanged when there is nothing to do.
+        function global:__winux-rewrite-chain {
+            param([AllowNull()][string]$Line)
+            if (-not $Line) { return $Line }
+            if ($Line -notmatch '&&|\|\|') { return $Line }
+            if ($Line -match "`n") { return $Line }   # multi-line input (a block)
+            try {
+                # the line goes in on stdin: rebuilding it from an argument list
+                # would strip its quotes (PowerShell 5.1 native argument rules)
+                $cand = ($Line | & $global:__winuxChainExe __ps-chain | Out-String).TrimEnd()
+            } catch { return $Line }
+            if (-not $cand -or $cand -eq $Line) { return $Line }
+            $errs = $null
+            $toks = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($cand, [ref]$toks, [ref]$errs)
+            if ($errs -and $errs.Count -gt 0) { return $Line }
+            return $cand
+        }
+
+        $global:winuxChainHook = 'winux: && and || chains'
+        Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
+            $line = ''
+            $cursor = 0
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+            $new = __winux-rewrite-chain -Line $line
+            if ($new -ne $line) {
+                [Microsoft.PowerShell.PSConsoleReadLine]::Replace(0, $line.Length, $new)
+            }
+            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+        } -BriefDescription $global:winuxChainHook -Description $global:winuxChainHook -ErrorAction SilentlyContinue
+    }
+}
+
 # venv-style prompt prefix: show `(winux) ` in front of every prompt line (like
 # Python's (.venv) prefix) so an activated window is recognizable at a glance.
 # The previous prompt function (default or user-customized) is saved and

@@ -117,6 +117,29 @@ try {
     Check 'cmd: the generated batch helpers are CRLF files' `
         (([IO.File]::ReadAllText((Join-Path $bin 'winux-deactivate.cmd'))) -notmatch "(?<!`r)`n") ''
 
+    # ------------------------------------- && / || in PowerShell 5.1 --------
+    # PowerShell 5.1 rejects && while parsing, so activation binds Enter and
+    # rewrites the line; here the rewrite helper and its semantics are tested.
+    $hook = @(Get-PSReadLineKeyHandler -Bound | Where-Object { $_.Description -like 'winux:*' })
+    Check 'activation installs the && / || line-editor hook (PS 5.1)' `
+        (($PSVersionTable.PSVersion.Major -ge 7) -or ($hook.Count -ge 1)) (($hook | ForEach-Object { $_.Description }) -join ',')
+    $rew = Text (('echo "a && b" && echo c' | & $winux __ps-chain))
+    # the quoted && stays inside its quotes, the real one becomes an if
+    Check 'the rewriter keeps quoted && and splits the real one' `
+        (($rew -match 'echo "a && b";') -and ($rew -match '\$__winuxChainOk') -and
+         ($rew -match 'if \(\$__winuxChainOk\) \{ echo c')) $rew
+    $quotedOnly = Text (('echo "a && b"' | & $winux __ps-chain))
+    Check 'a line without a top-level operator comes back unchanged' ($quotedOnly -eq 'echo "a && b"') $quotedOnly
+    $chain = 'cmd /c exit 1 && Write-Output must-not-run'
+    $rew2 = Text (($chain | & $winux __ps-chain))
+    $eval = (Invoke-Expression $rew2 | Out-String).Trim()
+    Check 'a failing step stops a rewritten && chain (shell semantics)' (($rew2 -notmatch '&&') -and ($eval -eq '')) "eval=$(Text $eval)"
+    $rew3 = Text (('cmd /c exit 1 || Write-Output fallback-ran' | & $winux __ps-chain))
+    $eval3 = (Invoke-Expression $rew3 | Out-String).Trim()
+    Check 'a failing step runs a rewritten || alternative' ($eval3 -eq 'fallback-ran') "eval=$(Text $eval3)"
+    $cmdChain = Invoke-CmdLine "cmd /c exit 0 && echo chain-ok >nul"
+    Check 'cmd.exe needs no help: its own && works' ($cmdChain -eq 0) "exit=$cmdChain"
+
     # ---------------------------------------------------------- fixtures ----
     mkdir -p src/sub | Out-Null
     Set-Content -Path src/a.txt -Value 'alpha'      -NoNewline
@@ -652,6 +675,11 @@ EOF
     Write-Host '== deactivate section ==' -ForegroundColor Cyan
 
     . (Join-Path $bin 'winux-deactivate.ps1')
+    $hookAfter = @(Get-PSReadLineKeyHandler -Bound | Where-Object { $_.Description -like 'winux:*' })
+    Check 'deactivate removes the && / || hook (Enter is AcceptLine again)' `
+        (($PSVersionTable.PSVersion.Major -ge 7) -or ($hookAfter.Count -eq 0) -or
+         ($hookAfter[0].Description -eq 'Accept the input or move to the next line if input is missing a closing token.')) `
+        (($hookAfter | ForEach-Object { $_.Description }) -join ',')
     Check 'deactivate restored the cd alias' ((Get-Alias cd -ErrorAction SilentlyContinue).Definition -eq 'Set-Location')
     # the *session function* must be gone; a winux-deactivate.ps1 that happens to
     # sit in a PATH directory (an installed winux, e.g. D:\my-tools\winux) is a
